@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nd_route_finder"
+version = "0.7.0"
+description = "Qt GPX round-trip route finder for cycling and hiking"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7,<7",
+    "osmnx>=2.1.1,<3",
+    "gpxpy>=1.6,<2",
+    "rasterio>=1.3,<2",
+    "networkx>=3.2,<4",
+]
+
+[project.scripts]
+nd-route-finder = "nd_route_finder.entrypoint.launcher:Launcher.run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
