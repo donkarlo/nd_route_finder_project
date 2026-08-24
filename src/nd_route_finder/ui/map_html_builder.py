@@ -42,7 +42,8 @@ class MapHtmlBuilder:
 <link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\">
 <style>
 html,body,#map{{height:100%;margin:0}}
-.legend{{background:white;padding:8px 10px;border-radius:6px;line-height:1.5}}
+.legend{{background:white;padding:9px 11px;border-radius:6px;line-height:1.6;font:14px sans-serif;box-shadow:0 1px 5px rgba(0,0,0,0.28)}}
+.legend-line{{display:inline-block;width:28px;height:0;border-top:5px solid;vertical-align:middle;margin-right:6px}}
 .hint{{background:white;padding:7px 10px;border-radius:6px;font:14px sans-serif}}
 </style>
 </head>
@@ -52,17 +53,19 @@ html,body,#map{{height:100%;margin:0}}
 <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
 <script>
 const start = {json.dumps(start)};
-const oldSegments = {json.dumps(old_segments, separators=(",", ":"))};
-const newSegments = {json.dumps(new_segments, separators=(",", ":"))};
+const oldSegments = {json.dumps(old_segments, separators=(\",\", \":\"))};
+const newSegments = {json.dumps(new_segments, separators=(\",\", \":\"))};
 const map = L.map('map');
 L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
   maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  attribution: '&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors'
 }}).addTo(map);
 
 const routeLayers = [];
 oldSegments.forEach(function(segment) {{
-  const layer = L.polyline(segment, {{color:'#64748b', weight:3, opacity:0.55}}).addTo(map);
+  const outline = L.polyline(segment, {{color:'#ffffff', weight:8, opacity:0.9}}).addTo(map);
+  const layer = L.polyline(segment, {{color:'#16a34a', weight:5, opacity:0.95}}).addTo(map);
+  routeLayers.push(outline);
   routeLayers.push(layer);
 }});
 newSegments.forEach(function(segment) {{
@@ -109,7 +112,9 @@ hint.addTo(map);
 const legend = L.control({{position:'topright'}});
 legend.onAdd = function() {{
   const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = '<b>Routes</b><br><span style=\"color:#64748b\">━━</span> Previous GPX<br><span style=\"color:#dc2626\">━━</span> Generated';
+  div.innerHTML = '<b>Route colors</b><br>' +
+    '<span class=\"legend-line\" style=\"border-color:#16a34a\"></span> Previously traveled<br>' +
+    '<span class=\"legend-line\" style=\"border-color:#dc2626\"></span> New suggested route';
   return div;
 }};
 legend.addTo(map);
