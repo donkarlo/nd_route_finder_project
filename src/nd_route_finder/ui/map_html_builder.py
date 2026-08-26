@@ -24,7 +24,11 @@ class MapHtmlBuilder:
             for segment in generated.segments
             if len(segment) >= 2
         ]
-        start = new_segments[0][0] if new_segments and new_segments[0] else [47.0707, 15.4395]
+        start = (
+            new_segments[0][0]
+            if new_segments and new_segments[0]
+            else [47.0707, 15.4395]
+        )
         return self._document(old_segments, new_segments, start, fit_routes=True)
 
     def _document(
@@ -34,90 +38,170 @@ class MapHtmlBuilder:
         start: list[float],
         fit_routes: bool,
     ) -> str:
-        return f"""<!doctype html>
+        old_segments_json = json.dumps(old_segments, separators=(",", ":"))
+        new_segments_json = json.dumps(new_segments, separators=(",", ":"))
+        start_json = json.dumps(start, separators=(",", ":"))
+        fit_routes_json = "true" if fit_routes else "false"
+
+        template = """<!DOCTYPE html>
 <html>
 <head>
-<meta charset=\"utf-8\">
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-<link rel=\"stylesheet\" href=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\">
-<style>
-html,body,#map{{height:100%;margin:0}}
-.legend{{background:white;padding:9px 11px;border-radius:6px;line-height:1.6;font:14px sans-serif;box-shadow:0 1px 5px rgba(0,0,0,0.28)}}
-.legend-line{{display:inline-block;width:28px;height:0;border-top:5px solid;vertical-align:middle;margin-right:6px}}
-.hint{{background:white;padding:7px 10px;border-radius:6px;font:14px sans-serif}}
-</style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ND Route Finder</title>
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        crossorigin=""
+    >
+    <style>
+        html, body, #map {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .route-legend {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 18px;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.28);
+            font: 13px sans-serif;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .legend-line {
+            width: 28px;
+            height: 5px;
+            border-radius: 3px;
+        }
+
+        .legend-old {
+            background: #238b45;
+        }
+
+        .legend-new {
+            background: #d62728;
+        }
+    </style>
 </head>
 <body>
-<div id=\"map\"></div>
-<script src=\"qrc:///qtwebchannel/qwebchannel.js\"></script>
-<script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
-<script>
-const start = {json.dumps(start)};
-const oldSegments = {json.dumps(old_segments, separators=(\",\", \":\"))};
-const newSegments = {json.dumps(new_segments, separators=(\",\", \":\"))};
-const map = L.map('map');
-L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-  maxZoom: 19,
-  attribution: '&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors'
-}}).addTo(map);
+    <div id="routeLegend" class="route-legend">
+        <div class="legend-item">
+            <span class="legend-line legend-old"></span>
+            <span>Previous routes</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-line legend-new"></span>
+            <span>Generated route</span>
+        </div>
+    </div>
+    <div id="map"></div>
 
-const routeLayers = [];
-oldSegments.forEach(function(segment) {{
-  const outline = L.polyline(segment, {{color:'#ffffff', weight:8, opacity:0.9}}).addTo(map);
-  const layer = L.polyline(segment, {{color:'#16a34a', weight:5, opacity:0.95}}).addTo(map);
-  routeLayers.push(outline);
-  routeLayers.push(layer);
-}});
-newSegments.forEach(function(segment) {{
-  const outline = L.polyline(segment, {{color:'#ffffff', weight:10, opacity:0.92}}).addTo(map);
-  const layer = L.polyline(segment, {{color:'#dc2626', weight:6, opacity:1.0}}).addTo(map);
-  routeLayers.push(outline);
-  routeLayers.push(layer);
-}});
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        crossorigin=""
+    ></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script>
+        const oldSegments = __OLD_SEGMENTS__;
+        const newSegments = __NEW_SEGMENTS__;
+        const startPoint = __START_POINT__;
+        const fitRoutes = __FIT_ROUTES__;
 
-const marker = L.circleMarker(start, {{radius:7, color:'#15803d', fillColor:'#22c55e', fillOpacity:1}})
-  .addTo(map).bindTooltip('Start');
-if ({str(fit_routes).lower()} && routeLayers.length) {{
-  const bounds = L.featureGroup(routeLayers).getBounds();
-  if (bounds.isValid()) {{
-    map.fitBounds(bounds.pad(0.08));
-  }} else {{
-    map.setView(start, 13);
-  }}
-}} else {{
-  map.setView(start, 13);
-}}
+        const map = L.map("map");
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "&copy; OpenStreetMap contributors"
+        }).addTo(map);
 
-let bridge = null;
-if (typeof qt !== 'undefined') {{
-  new QWebChannel(qt.webChannelTransport, function(channel) {{
-    bridge = channel.objects.bridge;
-  }});
-}}
-map.on('click', function(event) {{
-  marker.setLatLng(event.latlng);
-  if (bridge) {{
-    bridge.setStart(event.latlng.lat, event.latlng.lng);
-  }}
-}});
+        const startMarker = L.marker(startPoint, { draggable: false }).addTo(map);
+        let bridge = null;
 
-const hint = L.control({{position:'topleft'}});
-hint.onAdd = function() {{
-  const div = L.DomUtil.create('div', 'hint');
-  div.innerHTML = '<b>Click the map to choose the start point</b>';
-  return div;
-}};
-hint.addTo(map);
+        if (
+            typeof qt !== "undefined" &&
+            typeof QWebChannel !== "undefined" &&
+            qt.webChannelTransport
+        ) {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                bridge = channel.objects.bridge;
+            });
+        }
 
-const legend = L.control({{position:'topright'}});
-legend.onAdd = function() {{
-  const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = '<b>Route colors</b><br>' +
-    '<span class=\"legend-line\" style=\"border-color:#16a34a\"></span> Previously traveled<br>' +
-    '<span class=\"legend-line\" style=\"border-color:#dc2626\"></span> New suggested route';
-  return div;
-}};
-legend.addTo(map);
-</script>
+        map.on("click", function(event) {
+            startMarker.setLatLng(event.latlng);
+            if (bridge && bridge.setStart) {
+                bridge.setStart(event.latlng.lat, event.latlng.lng);
+            }
+        });
+
+        const routeBounds = [];
+
+        oldSegments.forEach(function(segment) {
+            if (segment.length < 2) {
+                return;
+            }
+            L.polyline(segment, {
+                color: "#238b45",
+                weight: 5,
+                opacity: 0.85
+            }).addTo(map);
+            segment.forEach(function(point) {
+                routeBounds.push(point);
+            });
+        });
+
+        newSegments.forEach(function(segment) {
+            if (segment.length < 2) {
+                return;
+            }
+            L.polyline(segment, {
+                color: "#ffffff",
+                weight: 10,
+                opacity: 0.95
+            }).addTo(map);
+            L.polyline(segment, {
+                color: "#d62728",
+                weight: 6,
+                opacity: 1.0
+            }).addTo(map);
+            segment.forEach(function(point) {
+                routeBounds.push(point);
+            });
+        });
+
+        if (fitRoutes && routeBounds.length > 0) {
+            map.fitBounds(routeBounds, { padding: [36, 36] });
+        } else {
+            map.setView(startPoint, 14);
+        }
+
+        if (oldSegments.length === 0 && newSegments.length === 0) {
+            document.getElementById("routeLegend").style.display = "none";
+        }
+    </script>
 </body>
-</html>"""
+</html>
+"""
+        return (
+            template
+            .replace("__OLD_SEGMENTS__", old_segments_json)
+            .replace("__NEW_SEGMENTS__", new_segments_json)
+            .replace("__START_POINT__", start_json)
+            .replace("__FIT_ROUTES__", fit_routes_json)
+        )
