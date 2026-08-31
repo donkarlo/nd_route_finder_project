@@ -4,6 +4,7 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from nd_route_finder.domain.activity_type import ActivityType
 from nd_route_finder.ui.main_window import MainWindow
 
 
@@ -19,6 +20,7 @@ class Launcher:
             application.setWindowIcon(icon)
 
         window = MainWindow()
+        window._activity.insertItem(1, "Walking", ActivityType.HIKING.value)
         if not icon.isNull():
             window.setWindowIcon(icon)
         window.show()
