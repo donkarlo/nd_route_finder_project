@@ -207,7 +207,7 @@ class MapHtmlBuilder:
         const startPoint = __START_POINT__;
         const fitRoutes = __FIT_ROUTES__;
 
-        const map = L.map("map");
+        const map = L.map("map", { zoomControl: false });
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
             attribution: "&copy; OpenStreetMap contributors"

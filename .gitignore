@@ -39,3 +39,4 @@ src/*.egg-info/
 /configs/
 /config/
 prompt/
+cache/

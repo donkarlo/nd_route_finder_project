@@ -46,6 +46,17 @@ class ElevationEnricher:
             ),
             max(explicit_inclines, default=0.0),
         )
+
+        stored_points = candidate.points or points
+        self._ensure_raster_elevations(stored_points, dem_paths)
+        candidate.points = [
+            GeoPoint(
+                latitude=point.latitude,
+                longitude=point.longitude,
+                elevation=self._require_elevation(point),
+            )
+            for point in stored_points
+        ]
         return candidate
 
     def uncached_profile_point_count(
