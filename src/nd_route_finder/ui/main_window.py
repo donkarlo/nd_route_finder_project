@@ -1,7 +1,9 @@
 from collections.abc import Callable
+import json
 from pathlib import Path
+import shutil
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -21,12 +23,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from nd_route_finder.analysis.track_analyzer import TrackAnalyzer
 from nd_route_finder.domain.activity_type import ActivityType
 from nd_route_finder.domain.route_request import RouteRequest
 from nd_route_finder.domain.track import Track
+from nd_route_finder.gpx.gpx_track_reader import GpxTrackReader
 from nd_route_finder.ui.map_bridge import MapBridge
 from nd_route_finder.ui.map_document_store import MapDocumentStore
 from nd_route_finder.ui.map_html_builder import MapHtmlBuilder
+from nd_route_finder.ui.profile_chart_widget import ProfileChartWidget
 from nd_route_finder.ui.route_worker import RouteWorker
 
 
@@ -34,8 +39,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._worker: RouteWorker | None = None
+        self._last_generated_output: Path | None = None
         self._map_builder = MapHtmlBuilder()
         self._map_store = MapDocumentStore()
+        self._track_analyzer = TrackAnalyzer()
+        self._gpx_reader = GpxTrackReader()
         self.setWindowTitle("nd_route_finder")
         self.resize(1280, 820)
 
@@ -74,6 +82,7 @@ class MainWindow(QMainWindow):
         )
         self._slope_note.setWordWrap(True)
 
+        self._load_gpx = QPushButton("Load GPX")
         self._generate = QPushButton("Generate route")
         self._status = QLabel("Click the map to choose the start point.")
         self._status.setWordWrap(True)
@@ -97,6 +106,33 @@ class MainWindow(QMainWindow):
         self._web.page().setWebChannel(self._web_channel)
         self._show_selector_map()
 
+        self._elevation_profile = ProfileChartWidget(
+            "Elevation profile",
+            "elevation",
+        )
+        self._slope_profile = ProfileChartWidget(
+            "Slope profile (100 m centered)",
+            "slope",
+        )
+        for profile in (self._elevation_profile, self._slope_profile):
+            profile.point_hovered.connect(self._profile_point_hovered)
+            profile.hover_left.connect(self._profile_hover_left)
+
+        self._profile_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._profile_splitter.addWidget(self._elevation_profile)
+        self._profile_splitter.addWidget(self._slope_profile)
+        self._profile_splitter.setStretchFactor(0, 1)
+        self._profile_splitter.setStretchFactor(1, 1)
+        self._profile_splitter.setSizes([500, 500])
+        self._profile_splitter.hide()
+
+        self._route_area_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._route_area_splitter.addWidget(self._web)
+        self._route_area_splitter.addWidget(self._profile_splitter)
+        self._route_area_splitter.setStretchFactor(0, 3)
+        self._route_area_splitter.setStretchFactor(1, 1)
+        self._route_area_splitter.setCollapsible(0, False)
+
         self._controls = QWidget()
         form = QFormLayout(self._controls)
         form.addRow(
@@ -117,10 +153,16 @@ class MainWindow(QMainWindow):
             self._path_row(self._output_path, self._choose_output, "Save as"),
         )
 
+        route_actions = QWidget()
+        route_actions_layout = QHBoxLayout(route_actions)
+        route_actions_layout.setContentsMargins(0, 0, 0, 0)
+        route_actions_layout.addWidget(self._load_gpx)
+        route_actions_layout.addWidget(self._generate)
+
         left_layout = QVBoxLayout()
         left_layout.addWidget(self._controls)
         left_layout.addWidget(self._slope_note)
-        left_layout.addWidget(self._generate)
+        left_layout.addWidget(route_actions)
         left_layout.addWidget(self._status)
         left_layout.addStretch(1)
         left = QWidget()
@@ -130,20 +172,16 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter()
         splitter.addWidget(left)
-        splitter.addWidget(self._web)
+        splitter.addWidget(self._route_area_splitter)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([360, 920])
         self.setCentralWidget(splitter)
 
+        self._load_gpx.clicked.connect(self._choose_gpx_track)
         self._generate.clicked.connect(self._start_generation)
 
-    def _path_row(
-        self,
-        line_edit: QLineEdit,
-        callback: Callable[[], None],
-        label: str,
-    ) -> QWidget:
+    def _path_row(self, line_edit: QLineEdit, callback: Callable[[], None], label: str) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -161,6 +199,11 @@ class MainWindow(QMainWindow):
         self._load_map_html(html)
 
     def _load_map_html(self, html: str) -> None:
+        html = html.replace(
+            'const map = L.map("map", { zoomControl: false });',
+            'const map = L.map("map", { zoomControl: false });\n        window.ndRouteMap = map;',
+            1,
+        )
         map_path = self._map_store.write(html)
         self._web.load(QUrl.fromLocalFile(str(map_path)))
 
@@ -171,6 +214,54 @@ class MainWindow(QMainWindow):
         self._longitude.setValue(longitude)
         self._status.setText(f"Start selected: {latitude:.6f}, {longitude:.6f}")
 
+    def _profile_point_hovered(self, latitude: float, longitude: float, label: str) -> None:
+        label_json = json.dumps(label)
+        script = f"""
+            (function() {{
+                if (!window.ndRouteMap || typeof L === "undefined") {{
+                    return;
+                }}
+                const routeMap = window.ndRouteMap;
+                const point = L.latLng({latitude:.10f}, {longitude:.10f});
+                const label = {label_json};
+                if (!window.ndProfileMarker) {{
+                    window.ndProfileMarker = L.circleMarker(point, {{
+                        radius: 8,
+                        color: "#111111",
+                        weight: 2,
+                        fillColor: "#ffd54f",
+                        fillOpacity: 1.0
+                    }}).addTo(routeMap);
+                    window.ndProfileMarker.bindTooltip(label, {{
+                        permanent: true,
+                        direction: "top",
+                        offset: [0, -9],
+                        opacity: 0.95
+                    }});
+                }} else {{
+                    window.ndProfileMarker.setLatLng(point);
+                    const tooltip = window.ndProfileMarker.getTooltip();
+                    if (tooltip) {{
+                        tooltip.setContent(label);
+                    }}
+                }}
+                window.ndProfileMarker.bringToFront();
+            }})();
+        """
+        self._web.page().runJavaScript(script)
+
+    def _profile_hover_left(self) -> None:
+        self._web.page().runJavaScript(
+            """
+            (function() {
+                if (window.ndRouteMap && window.ndProfileMarker) {
+                    window.ndRouteMap.removeLayer(window.ndProfileMarker);
+                    window.ndProfileMarker = null;
+                }
+            })();
+            """
+        )
+
     def _choose_gpx_root(self) -> None:
         selected = QFileDialog.getExistingDirectory(
             self,
@@ -180,6 +271,69 @@ class MainWindow(QMainWindow):
         if selected:
             self._gpx_root.setText(selected)
             self._output_path.setText(str(Path(selected) / "generated_round_trip.gpx"))
+
+    def _choose_gpx_track(self) -> None:
+        initial_path = self._gpx_root.text().strip()
+        if not initial_path:
+            initial_path = str(Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load GPX route",
+            initial_path,
+            "GPX (*.gpx);;All files (*)",
+        )
+        if not selected:
+            return
+
+        path = Path(selected).expanduser().resolve()
+        try:
+            track = self._gpx_reader.read(path)
+            track = self._track_analyzer.analyze(track)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Load GPX failed",
+                f"Could not load GPX:\n{path}\n\n{type(exc).__name__}: {exc}",
+            )
+            return
+
+        points = [point for segment in track.segments for point in segment]
+        if len(points) < 2:
+            QMessageBox.warning(
+                self,
+                "Load GPX failed",
+                "The selected GPX does not contain a route with at least two points.",
+            )
+            return
+
+        self._profile_hover_left()
+        self._load_map_html(self._map_builder.build_routes([], track))
+
+        missing_elevation_count = 0
+        for point in points:
+            if point.elevation is None:
+                missing_elevation_count += 1
+
+        if missing_elevation_count > 0:
+            self._elevation_profile.clear()
+            self._slope_profile.clear()
+            self._profile_splitter.hide()
+            QMessageBox.warning(
+                self,
+                "Elevation data missing",
+                f"The GPX route was loaded on the map, but {missing_elevation_count} point(s) "
+                "do not contain elevation values. Elevation and slope profiles cannot be "
+                "calculated reliably from this GPX file.",
+            )
+            self._status.setText(
+                f"Loaded GPX map: {path}. Elevation data is incomplete, so profiles are unavailable."
+            )
+            return
+
+        self._show_profiles(track)
+        self._status.setText(
+            f"Loaded GPX — {track.distance_m / 1000.0:.2f} km: {path}"
+        )
 
     def _choose_dem(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -198,10 +352,71 @@ class MainWindow(QMainWindow):
             self._output_path.text(),
             "GPX (*.gpx)",
         )
-        if selected:
-            self._output_path.setText(
-                selected if selected.lower().endswith(".gpx") else selected + ".gpx"
+        if not selected:
+            return
+
+        if selected.lower().endswith(".gpx"):
+            destination_text = selected
+        else:
+            destination_text = selected + ".gpx"
+        destination = Path(destination_text).expanduser().resolve()
+        self._output_path.setText(str(destination))
+
+        source = self._last_generated_output
+        if source is None:
+            self._status.setText(
+                f"Output selected: {destination}. Generate the route to save it there."
             )
+            return
+
+        source = source.expanduser().resolve()
+        if not source.is_file() or source.stat().st_size <= 0:
+            QMessageBox.critical(
+                self,
+                "Save GPX failed",
+                f"The generated GPX is no longer available: {source}",
+            )
+            return
+        if not destination.parent.is_dir():
+            QMessageBox.critical(
+                self,
+                "Save GPX failed",
+                f"The selected folder does not exist: {destination.parent}",
+            )
+            return
+
+        if destination == source:
+            self._status.setText(f"GPX already saved: {destination}")
+            return
+
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Save GPX failed",
+                f"Could not save GPX to:\n{destination}\n\n{type(exc).__name__}: {exc}",
+            )
+            return
+
+        if not destination.is_file() or destination.stat().st_size <= 0:
+            QMessageBox.critical(
+                self,
+                "Save GPX failed",
+                f"GPX was not found on disk after Save As: {destination}",
+            )
+            return
+        if destination.stat().st_size != source.stat().st_size:
+            QMessageBox.critical(
+                self,
+                "Save GPX failed",
+                f"Saved GPX size does not match the generated GPX: {destination}",
+            )
+            return
+
+        self._status.setText(
+            f"GPX saved: {destination} ({destination.stat().st_size / 1024.0:.1f} KiB)"
+        )
 
     def _start_generation(self) -> None:
         gpx_root = Path(self._gpx_root.text()).expanduser().resolve()
@@ -210,7 +425,9 @@ class MainWindow(QMainWindow):
             output = output.with_suffix(".gpx")
         self._output_path.setText(str(output))
         dem_text = self._dem_path.text().strip()
-        dem = Path(dem_text).expanduser().resolve() if dem_text else None
+        dem: Path | None = None
+        if dem_text:
+            dem = Path(dem_text).expanduser().resolve()
 
         if not gpx_root.is_dir():
             QMessageBox.warning(self, "Invalid input", "Choose an existing GPX root folder.")
@@ -231,8 +448,14 @@ class MainWindow(QMainWindow):
             dem_path=dem,
         )
 
+        self._elevation_profile.clear()
+        self._slope_profile.clear()
+        self._profile_splitter.hide()
+        self._profile_hover_left()
+
         self._controls.setEnabled(False)
         self._web.setEnabled(False)
+        self._load_gpx.setEnabled(False)
         self._generate.setEnabled(False)
         self._status.setText(f"Starting … Output is fixed to: {output}")
         self._worker = RouteWorker(request)
@@ -241,6 +464,16 @@ class MainWindow(QMainWindow):
         self._worker.failed.connect(self._generation_failed)
         self._worker.finished.connect(self._generation_finished)
         self._worker.start()
+
+    def _show_profiles(self, track: Track) -> None:
+        self._elevation_profile.set_track(track)
+        self._slope_profile.set_track(track)
+        self._profile_splitter.show()
+        available_height = max(1, self._route_area_splitter.height())
+        profile_height = min(320, max(210, int(available_height * 0.34)))
+        self._route_area_splitter.setSizes(
+            [max(1, available_height - profile_height), profile_height]
+        )
 
     def _generation_succeeded(self, result: object) -> None:
         if not isinstance(result, tuple) or len(result) != 4:
@@ -257,8 +490,10 @@ class MainWindow(QMainWindow):
             self._generation_failed(f"GPX was not found on disk after saving: {output}")
             return
 
+        self._last_generated_output = output.resolve()
         self._output_path.setText(str(output))
         self._load_map_html(str(html))
+        self._show_profiles(generated)
         if generated.max_grade_percent is None:
             self._generation_failed("Internal error: slope was not evaluated.")
             return
@@ -277,4 +512,5 @@ class MainWindow(QMainWindow):
     def _generation_finished(self) -> None:
         self._controls.setEnabled(True)
         self._web.setEnabled(True)
+        self._load_gpx.setEnabled(True)
         self._generate.setEnabled(True)

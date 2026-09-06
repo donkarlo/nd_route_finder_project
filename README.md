@@ -23,6 +23,11 @@ satisfying the routing, access, and slope constraints.
 - Filters access restrictions, unbridged fords, mapped water crossings without
   a bridge, and mapped blocked barriers without an opening.
 - Draws previous GPX tracks and the generated route with different styles.
+- Shows resizable elevation and slope profile panels after route generation.
+- Shows the corresponding route position on the map while the mouse moves over
+  either profile chart.
+- Loads an existing GPX route on demand and shows its elevation and slope
+  profiles when the GPX contains elevation data.
 
 
 ## Quick usage
@@ -36,6 +41,13 @@ satisfying the routing, access, and slope constraints.
 6. Optionally select a local DEM/GeoTIFF file.
 7. Select the output GPX path.
 8. Generate the route.
+9. Resize the profile area or the two profile panels by dragging the splitter
+   handles.
+10. Move the mouse over either profile to locate that point on the map.
+
+To inspect an existing GPX instead of generating a new route, click `Load GPX`
+and select the file. The route is displayed on the map and the same elevation
+and slope profile panels are used for inspection.
 
 
 ## Inputs
@@ -50,6 +62,9 @@ The route generator uses the following inputs:
 - Optional local DEM/GeoTIFF
 - Output GPX path
 
+For profile inspection, a single existing `.gpx` file can also be loaded with
+`Load GPX`.
+
 
 ## Output
 
@@ -58,6 +73,14 @@ The application produces a GPX file containing the generated round-trip route.
 The generated route is also displayed on the map together with previously
 travelled GPX tracks so that the relationship between new and previously
 traversed areas can be inspected visually.
+
+After generation, two resizable profile panels are displayed below the map:
+
+- elevation in metres versus travelled distance in kilometres
+- slope in percent versus travelled distance in kilometres
+
+Moving the mouse over either chart displays the corresponding position on the
+map.
 
 
 ## Routing objective
@@ -104,6 +127,12 @@ Copernicus GLO-30 is a 30 m Digital Surface Model, so the computed value is a
 terrain-based slope estimate rather than a survey-grade measurement of the road
 surface.
 
+The interactive slope profile uses a centered 100 m window to avoid displaying
+point-to-point noise as the local grade. Existing GPX files can be profiled when
+they contain elevation values for all route points. If elevation values are
+missing, the route is still shown on the map but the application reports that a
+reliable elevation or slope profile cannot be calculated from that file.
+
 
 ## GPX output reliability
 
@@ -130,6 +159,10 @@ GPX tracks are displayed.
 
 The generated route is drawn as a thick red line with a white outline, while
 previously travelled tracks are displayed in gray.
+
+A temporary marker is displayed on the map while a route profile is inspected,
+so the chart distance, elevation or slope can be related directly to the route
+geometry.
 
 
 ## Project structure
@@ -174,6 +207,8 @@ python route_finder.py
 - Slope values depend on the resolution and accuracy of the elevation model.
 - Copernicus GLO-30 has a spatial resolution of approximately 30 m and therefore
   cannot represent every short or highly local road gradient accurately.
+- Loaded GPX files need complete elevation values for elevation and slope
+  profile visualization.
 - Routing quality depends on the completeness and correctness of OpenStreetMap
   data.
 - Missing or incorrect OpenStreetMap access, barrier, bridge, or surface
