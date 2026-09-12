@@ -5,7 +5,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from nd_route_finder.domain.activity_type import ActivityType
-from nd_route_finder.ui.multi_waypoint_main_window import MultiWaypointMainWindow
+from nd_route_finder.ui.main_window import MainWindow
 
 
 class Launcher:
@@ -19,7 +19,7 @@ class Launcher:
         if not icon.isNull():
             application.setWindowIcon(icon)
 
-        window = MultiWaypointMainWindow()
+        window = MainWindow()
         window._activity.insertItem(1, "Walking", ActivityType.HIKING.value)
         if not icon.isNull():
             window.setWindowIcon(icon)
