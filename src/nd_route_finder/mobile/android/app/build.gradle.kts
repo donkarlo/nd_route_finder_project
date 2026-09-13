@@ -1,0 +1,25 @@
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.ndroutefinder.mobile"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.ndroutefinder.garmin"
+        minSdk = 26
+        targetSdk = 37
+        versionCode = 20
+        versionName = "2.0.0-alpha1"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.4.0@aar")
+}

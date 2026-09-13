@@ -1,0 +1,14 @@
+ND Route Finder mobile v2
+
+1. Build/install Android first:
+   ./build_and_install.sh
+
+2. Build the two Garmin Connect IQ PRGs:
+   GARMIN_DEVELOPER_KEY=/path/to/developer_key.der ./garmin_connectiq/build_garmin_apps.sh
+
+3. Sideload both PRGs to GARMIN/APPS for testing.
+
+4. Add "ND Route Target" as a data field to Walking (and any other activity where
+   you want a point sent from the phone to become the active native navigation target).
+
+5. Keep Garmin Connect installed and paired with the watch.

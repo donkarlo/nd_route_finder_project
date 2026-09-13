@@ -1,0 +1,147 @@
+import Toybox.Application;
+import Toybox.Communications;
+import Toybox.Position;
+import Toybox.PersistedContent;
+import Toybox.System;
+import Toybox.Timer;
+import Toybox.WatchUi;
+
+var gReceiverStatus = "Waiting for phone…";
+
+class NdRouteReceiverApp extends Application.AppBase {
+    var _openTimer = null;
+    var _pendingName = null;
+    var _openAttempts = 0;
+    var _knownWaypointIds = null;
+
+    function initialize() {
+        AppBase.initialize();
+        _openTimer = new Timer.Timer();
+        _knownWaypointIds = {};
+    }
+
+    function onStart(state) {
+        gReceiverStatus = "Waiting for route target…";
+        Communications.registerForPhoneAppMessages(method(:onPhoneMessage));
+    }
+
+    function onStop(state) {
+        if (_openTimer != null) {
+            _openTimer.stop();
+        }
+    }
+
+    function getInitialView() {
+        return [ new NdRouteReceiverView() ];
+    }
+
+    function onPhoneMessage(message as Communications.PhoneAppMessage) as Void {
+        try {
+            if (message == null || message.data == null) {
+                gReceiverStatus = "Empty phone message";
+                WatchUi.requestUpdate();
+                return;
+            }
+
+            var data = message.data;
+            var latitude = data["lat"];
+            var longitude = data["lon"];
+            var pointName = data["name"];
+            if (pointName == null) {
+                pointName = "ND point";
+            }
+
+            var location = new Position.Location({
+                :latitude => latitude,
+                :longitude => longitude,
+                :format => :degrees
+            });
+
+            // Remove an older waypoint owned by this app with the same name.
+            var oldItems = PersistedContent.getAppWaypoints();
+            var oldItem = oldItems.next();
+            while (oldItem != null) {
+                if (oldItem.getName() == pointName) {
+                    oldItem.remove();
+                }
+                oldItem = oldItems.next();
+            }
+
+            // Remember every waypoint that already exists. After saveWaypoint(), the
+            // newly-created waypoint can then be identified reliably even when the
+            // app-owned iterator is slow to refresh on a real device.
+            _knownWaypointIds = {};
+            var beforeItems = PersistedContent.getWaypoints();
+            var beforeItem = beforeItems.next();
+            while (beforeItem != null) {
+                _knownWaypointIds[beforeItem.getId()] = true;
+                beforeItem = beforeItems.next();
+            }
+
+            PersistedContent.saveWaypoint(location, { :name => pointName });
+            _pendingName = pointName;
+            _openAttempts = 0;
+            gReceiverStatus = "Opening activity chooser…";
+            WatchUi.requestUpdate();
+
+            // A newly saved waypoint is not always visible immediately on real
+            // devices. Poll for up to ~20 s and open the native waypoint intent as
+            // soon as it appears. Garmin will then ask which compatible native
+            // activity (Walk/Run/Bike/etc.) should be used.
+            _openTimer.stop();
+            _openTimer.start(method(:tryOpenWaypoint), 250, true);
+        } catch (error) {
+            gReceiverStatus = "Target error";
+            System.println(error);
+            WatchUi.requestUpdate();
+        }
+    }
+
+    function tryOpenWaypoint() {
+        try {
+            _openAttempts += 1;
+
+            // Use the full waypoint iterator instead of only getAppWaypoints().
+            // This is more reliable immediately after saveWaypoint() on-device.
+            var items = PersistedContent.getWaypoints();
+            var item = items.next();
+            while (item != null) {
+                var isNew = !_knownWaypointIds.hasKey(item.getId());
+                if (_pendingName != null && item.getName() == _pendingName && isNew) {
+                    _openTimer.stop();
+                    gReceiverStatus = "Choose activity…";
+                    WatchUi.requestUpdate();
+                    System.exitTo(item.toIntent());
+                    return;
+                }
+                item = items.next();
+            }
+
+            // Fallback: if the global iterator did not expose a distinct new ID,
+            // try the app-owned collection before giving up.
+            if (_openAttempts >= 80) {
+                var appItems = PersistedContent.getAppWaypoints();
+                var appItem = appItems.next();
+                while (appItem != null) {
+                    if (_pendingName != null && appItem.getName() == _pendingName) {
+                        _openTimer.stop();
+                        gReceiverStatus = "Choose activity…";
+                        WatchUi.requestUpdate();
+                        System.exitTo(appItem.toIntent());
+                        return;
+                    }
+                    appItem = appItems.next();
+                }
+
+                _openTimer.stop();
+                gReceiverStatus = "Waypoint saved; open Locations";
+                WatchUi.requestUpdate();
+            }
+        } catch (error) {
+            _openTimer.stop();
+            gReceiverStatus = "Open navigation error";
+            System.println(error);
+            WatchUi.requestUpdate();
+        }
+    }
+}

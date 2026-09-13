@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ND Route Finder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+:root{--bg:#f6f8fb;--panel:#fff;--ink:#172033;--muted:#667085;--line:#dbe2ea;--accent:#2463a7;--green:#218b50;--red:#c84343;--soft:#eef4fb;--shadow:0 6px 24px rgba(26,39,61,.10)}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+body{overflow:hidden}.app{height:100%;display:grid;grid-template-columns:minmax(330px,410px) 1fr}.panel{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:14px 15px 24px;z-index:1000}.mapWrap{position:relative;min-width:0}.map{height:100%;width:100%;background:#e8edf3}
+h1{font-size:21px;margin:0 0 10px;display:flex;align-items:center;gap:8px}.logo{width:30px;height:30px;border-radius:8px}.section{border:1px solid var(--line);border-radius:12px;margin-top:10px;padding:11px;background:#fff}.sectionTitle{font-weight:700;font-size:14px;margin-bottom:8px}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{margin-top:8px}.field label{display:block;font-size:12px;color:var(--muted);font-weight:650;margin-bottom:4px}input,select,button{font:inherit}input,select{width:100%;min-height:40px;border:1px solid #cbd5df;border-radius:9px;padding:8px 10px;background:#fff;color:var(--ink)}button{min-height:41px;border:0;border-radius:9px;padding:8px 11px;font-weight:700;background:var(--accent);color:#fff;cursor:pointer}button.secondary{background:#eef2f7;color:#24344e;border:1px solid #cfd7e1}button.green{background:var(--green)}button.red{background:var(--red)}button:disabled{opacity:.55;cursor:default}.buttonGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.buttonStack{display:grid;gap:8px;margin-top:9px}.searchRow{display:grid;grid-template-columns:1fr auto;gap:7px}.searchResults{margin-top:7px;display:grid;gap:5px}.searchItem{display:block;text-align:left;width:100%;background:#f7f9fc;color:#263449;border:1px solid var(--line);font-weight:500;line-height:1.25}.waypoints{display:grid;gap:6px;margin-top:8px}.wp{border:1px solid var(--line);border-radius:9px;padding:7px;background:#f8fafc;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}.wpText{font-size:12px;line-height:1.25;overflow-wrap:anywhere}.wpBtns{display:flex;gap:4px}.mini{min-width:32px;min-height:31px;padding:4px 7px;border-radius:7px;background:#e9eef5;color:#22334d}.legend{position:absolute;top:12px;right:12px;z-index:500;background:rgba(255,255,255,.94);border:1px solid #d5dce5;border-radius:10px;padding:8px 10px;box-shadow:var(--shadow);font-size:12px}.swatch{display:inline-block;width:22px;height:4px;border-radius:3px;margin-right:6px;vertical-align:middle}.status{font-size:12px;line-height:1.4;color:#344258;background:#f4f7fb;border-radius:9px;padding:8px;margin-top:8px;white-space:pre-wrap}.garminStatus{background:#f2f8f5;border:1px solid #cfe8da}.pill{display:inline-block;font-size:11px;padding:3px 7px;border-radius:99px;background:var(--soft);color:var(--accent);margin-left:auto}.mobileTabs{display:none}.routeStats{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}.stat{font-size:12px;background:#edf3f9;padding:5px 8px;border-radius:99px}.hint{font-size:11px;color:var(--muted);line-height:1.35;margin-top:5px}.profileGrid{display:grid;gap:10px}.profileCard{border:1px solid var(--line);border-radius:9px;padding:7px;background:#fbfcfe}.profileTitle{font-size:12px;font-weight:700;margin-bottom:4px}.profileSvg{display:block;width:100%;height:105px;background:#fff;border-radius:6px}.profileMeta{font-size:10px;color:var(--muted);margin-top:3px}
+@media(max-width:800px){body{overflow:auto}.app{height:auto;min-height:100%;display:block}.panel{border-right:0;border-bottom:1px solid var(--line);max-height:none;padding-bottom:16px}.mapWrap{height:57vh;min-height:410px}.map{height:100%}.legend{top:8px;right:8px}.section{padding:10px}.row{gap:6px}.mobileTabs{display:flex;position:sticky;top:0;z-index:1200;background:#fff;padding:7px 0 6px;gap:6px}.mobileTabs button{min-height:36px;flex:1}.collapsedMobile{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel" id="panel">
+    <h1><img class="logo" src="app_icon.svg" alt=""> ND Route Finder <span class="pill">mobile</span></h1>
+    <div class="mobileTabs"><button class="secondary" onclick="showMobile('controls')">Controls</button><button class="secondary" onclick="showMobile('map')">Map</button></div>
+    <div id="controls">
+      <div class="section">
+        <div class="sectionTitle">Map / search</div>
+        <div class="searchRow"><input id="search" placeholder="Search a place or address"/><button onclick="doSearch()">Search</button></div>
+        <div id="searchResults" class="searchResults"></div>
+        <div class="field"><label>Map / search action</label><select id="selectionMode"><option value="start">Set start point</option><option value="waypoint">Add intermediate point</option></select></div>
+      </div>
+
+      <div class="section">
+        <div class="sectionTitle">Route settings</div>
+        <div class="field"><label>Activity</label><select id="activity"><option value="cycling">Cycling</option><option value="hiking">Hiking</option><option value="walking">Walking — paths allowed</option></select></div>
+        <div class="row">
+          <div class="field"><label>Start latitude</label><input id="lat" type="number" step="0.0000001" value="47.0707000" /></div>
+          <div class="field"><label>Start longitude</label><input id="lon" type="number" step="0.0000001" value="15.4395000" /></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Target distance (km)</label><input id="distance" type="number" min="1" max="150" step="0.5" value="20" /></div>
+          <div class="field"><label>Maximum slope (%)</label><input id="grade" type="number" min="1" max="60" step="0.5" value="12" /></div>
+        </div>
+        <div class="hint">Mobile routing uses BRouter road/trail data and elevation. Walking/Hiking use a path-capable profile with fewer road restrictions than cycling.</div>
+      </div>
+
+      <div class="section">
+        <div class="sectionTitle">Intermediate points</div>
+        <div class="hint">Select “Add intermediate point”, then tap the map or a search result. Order is preserved.</div>
+        <div id="waypoints" class="waypoints"></div>
+        <div class="buttonGrid"><button class="secondary" onclick="clearWaypoints()">Clear</button><button class="secondary" onclick="fitAll()">Fit points</button></div>
+      </div>
+
+      <div class="section">
+        <div class="sectionTitle">Route</div>
+        <div class="buttonGrid"><button id="generateBtn" onclick="generateRoute()">Generate route</button><button class="secondary" onclick="Android.pickGpx()">Load GPX</button></div>
+        <div id="routeStats" class="routeStats"></div>
+        <div id="status" class="status">Tap the map to choose the start point.</div>
+      </div>
+
+      <div class="section" id="profilesSection" style="display:none">
+        <div class="sectionTitle">Route profiles</div>
+        <div class="profileGrid">
+          <div class="profileCard"><div class="profileTitle">Elevation profile</div><svg id="elevationProfile" class="profileSvg" viewBox="0 0 360 105" preserveAspectRatio="none"></svg><div id="elevationMeta" class="profileMeta"></div></div>
+          <div class="profileCard"><div class="profileTitle">Slope profile</div><svg id="slopeProfile" class="profileSvg" viewBox="0 0 360 105" preserveAspectRatio="none"></svg><div id="slopeMeta" class="profileMeta"></div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="sectionTitle">Garmin</div>
+        <div class="buttonStack">
+          <button class="green" onclick="sendToCurrentActivity()">Navigate active Garmin activity to start point</button>
+          <button class="green" onclick="openNativeNavigation()">Open Garmin navigation for start point</button>
+          <button class="green" onclick="sendRoute()">Send current GPX route to Garmin Connect</button>
+          <button class="secondary" onclick="Android.refreshGarmin()">Refresh Garmin connection</button>
+        </div>
+        <div class="hint">Active-activity navigation needs the “ND Route Target” Connect IQ data field installed and added to that activity. Native navigation uses the “ND Route Receiver” watch app. Full GPX import is handed to Garmin Connect, then Save/Send to Device.</div>
+        <div id="garminStatus" class="status garminStatus">Garmin: initializing…</div>
+      </div>
+    </div>
+  </aside>
+  <main class="mapWrap" id="mapWrap">
+    <div id="map" class="map"></div>
+    <div class="legend"><div><span class="swatch" style="background:#2463a7"></span>Current route</div><div style="margin-top:4px"><span class="swatch" style="background:#218b50"></span>Previous route</div></div>
+  </main>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+'use strict';
+let map, startMarker, waypointMarkers=[], routeLayer=null, previousLayers=[];
+let waypoints=[]; let currentRoute=null; let busy=false;
+const $=id=>document.getElementById(id);
+const start={lat:47.0707,lon:15.4395};
+
+function init(){
+  map=L.map('map',{zoomControl:true}).setView([start.lat,start.lon],13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  startMarker=L.marker([start.lat,start.lon],{draggable:false}).addTo(map).bindTooltip('Start');
+  map.on('click',e=>applySelectedPoint(e.latlng.lat,e.latlng.lng,'Map point'));
+  $('lat').addEventListener('change',syncStartInputs); $('lon').addEventListener('change',syncStartInputs);
+  $('search').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+  renderWaypoints();
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function n(v,fallback=0){const x=Number(v);return Number.isFinite(x)?x:fallback;}
+function syncStartInputs(){setStart(n($('lat').value,start.lat),n($('lon').value,start.lon),'Coordinates');}
+function setStart(lat,lon,label){
+  if(lat<-90||lat>90||lon<-180||lon>180)return;
+  start.lat=lat;start.lon=lon;$('lat').value=lat.toFixed(7);$('lon').value=lon.toFixed(7);
+  startMarker.setLatLng([lat,lon]).bindTooltip('Start — '+label); if(!busy) $('status').textContent=`Start selected: ${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+}
+function applySelectedPoint(lat,lon,label){
+  if($('selectionMode').value==='waypoint'){waypoints.push({lat,lon,label});renderWaypoints();syncWaypointMarkers();$('status').textContent=`Intermediate point added: ${lat.toFixed(6)}, ${lon.toFixed(6)}`;}
+  else {setStart(lat,lon,label);startMarker.setLatLng([lat,lon]);}
+}
+function renderWaypoints(){
+  const root=$('waypoints'); root.innerHTML='';
+  waypoints.forEach((w,i)=>{const el=document.createElement('div');el.className='wp';el.innerHTML=`<div class="wpText"><b>${i+1}.</b> ${w.lat.toFixed(6)}, ${w.lon.toFixed(6)}${w.label?' — '+esc(w.label):''}</div><div class="wpBtns"><button class="mini" onclick="moveWp(${i},-1)">↑</button><button class="mini" onclick="moveWp(${i},1)">↓</button><button class="mini" onclick="removeWp(${i})">×</button></div>`;root.appendChild(el);});
+  if(!waypoints.length)root.innerHTML='<div class="hint">No intermediate points.</div>';
+}
+function syncWaypointMarkers(){waypointMarkers.forEach(m=>map.removeLayer(m));waypointMarkers=[];waypoints.forEach((w,i)=>{const m=L.circleMarker([w.lat,w.lon],{radius:8,color:'#8b5cf6',fillColor:'#fff',fillOpacity:1,weight:3}).addTo(map).bindTooltip(`${i+1}. ${w.label||'Waypoint'}`);waypointMarkers.push(m);});}
+function moveWp(i,d){const j=i+d;if(j<0||j>=waypoints.length)return;[waypoints[i],waypoints[j]]=[waypoints[j],waypoints[i]];renderWaypoints();syncWaypointMarkers();}
+function removeWp(i){waypoints.splice(i,1);renderWaypoints();syncWaypointMarkers();}
+function clearWaypoints(){waypoints=[];renderWaypoints();syncWaypointMarkers();}
+function fitAll(){const pts=[[start.lat,start.lon],...waypoints.map(w=>[w.lat,w.lon])];if(currentRoute?.points)pts.push(...currentRoute.points.map(p=>[p[0],p[1]]));if(pts.length>1)map.fitBounds(pts,{padding:[24,24]});}
+function doSearch(){const q=$('search').value.trim();if(q.length<2)return;$('searchResults').innerHTML='<div class="hint">Searching…</div>';Android.searchPlaces(q);}
+window.ndSearchResults=function(results){const root=$('searchResults');root.innerHTML='';results.forEach((r,i)=>{const b=document.createElement('button');b.className='searchItem';b.textContent=r.label;b.onclick=()=>{applySelectedPoint(Number(r.lat),Number(r.lon),r.label);map.setView([r.lat,r.lon],16);root.innerHTML='';};root.appendChild(b);});if(!results.length)root.innerHTML='<div class="hint">No results.</div>';};
+window.ndSearchFailed=function(msg){$('searchResults').innerHTML='<div class="hint">'+esc(msg)+'</div>';};
+function generateRoute(){if(busy)return;const req={startLat:start.lat,startLon:start.lon,activity:$('activity').value,distanceKm:n($('distance').value,20),maxGrade:n($('grade').value,12),waypoints:waypoints.map(w=>({lat:w.lat,lon:w.lon}))};Android.generateRoute(JSON.stringify(req));}
+window.ndSetBusy=function(flag,text){busy=!!flag;$('generateBtn').disabled=busy;if(text)$('status').textContent=text;};
+function displayRoute(data,loaded){
+  if(routeLayer){routeLayer.setStyle({color:'#218b50',weight:4,opacity:.75});previousLayers.push(routeLayer);while(previousLayers.length>5){const old=previousLayers.shift();map.removeLayer(old);}}
+  currentRoute=data;const latlngs=(data.points||[]).map(p=>[p[0],p[1]]);routeLayer=L.polyline(latlngs,{color:'#2463a7',weight:5,opacity:.95}).addTo(map);if(latlngs.length>1)map.fitBounds(routeLayer.getBounds(),{padding:[25,25]});
+  const slope=data.maxGrade==null?'slope n/a':`max slope ${Number(data.maxGrade).toFixed(1)}%`; $('routeStats').innerHTML=`<span class="stat">${Number(data.distanceKm).toFixed(2)} km</span><span class="stat">${slope}</span>${data.fallback?'<span class="stat">closest fallback</span>':''}`;renderProfiles(data);$('status').textContent=data.note||(loaded?'GPX loaded.':'Route ready.');busy=false;$('generateBtn').disabled=false;
+}
+
+function hav(a,b){const R=6371008.8,rad=Math.PI/180;const p1=a[0]*rad,p2=b[0]*rad,dp=(b[0]-a[0])*rad,dl=(b[1]-a[1])*rad;const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(x)));}
+function drawProfile(svgId,values,minY,maxY){const svg=$(svgId);svg.innerHTML='';if(!values.length||!Number.isFinite(minY)||!Number.isFinite(maxY)){return;}if(Math.abs(maxY-minY)<1e-6){maxY=minY+1;}const W=360,H=105,pad=7;const maxX=values[values.length-1][0]||1;const pts=values.map(v=>{const x=pad+(W-2*pad)*(v[0]/maxX);const y=pad+(H-2*pad)*(1-(v[1]-minY)/(maxY-minY));return `${x.toFixed(1)},${y.toFixed(1)}`;}).join(' ');svg.innerHTML=`<line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="#ccd5e0" stroke-width="1"/><polyline fill="none" stroke="#2463a7" stroke-width="2.2" vector-effect="non-scaling-stroke" points="${pts}"/>`; }
+function renderProfiles(data){const pts=(data.points||[]);const hasEle=pts.length>1&&pts.every(p=>p.length>2&&Number.isFinite(Number(p[2])));const section=$('profilesSection');if(!hasEle){section.style.display='none';return;}let d=0;const elev=[[0,Number(pts[0][2])]],slopes=[];for(let i=1;i<pts.length;i++){const seg=hav(pts[i-1],pts[i]);d+=seg;const e=Number(pts[i][2]);elev.push([d,e]);if(seg>=2){slopes.push([d,100*(e-Number(pts[i-1][2]))/seg]);}}const es=elev.map(v=>v[1]),svals=slopes.map(v=>v[1]).filter(Number.isFinite);const emin=Math.min(...es),emax=Math.max(...es);let absSlope=svals.length?Math.max(...svals.map(Math.abs)):0;absSlope=Math.max(5,Math.min(absSlope,40));drawProfile('elevationProfile',elev,emin,emax);drawProfile('slopeProfile',slopes,-absSlope,absSlope);$('elevationMeta').textContent=`${emin.toFixed(0)}–${emax.toFixed(0)} m • ${(d/1000).toFixed(2)} km`;$('slopeMeta').textContent=data.maxGrade==null?'Slope profile from sampled GPX points':`Smoothed max slope: ${Number(data.maxGrade).toFixed(1)}%`;section.style.display='block';}
+
+window.ndRouteReady=function(data){displayRoute(data,false);};window.ndLoadedGpx=function(data){displayRoute(data,true);};window.ndRouteFailed=function(msg){busy=false;$('generateBtn').disabled=false;$('status').textContent='Route error: '+msg;};
+function sendToCurrentActivity(){Android.sendPointToCurrentActivity(start.lat,start.lon,'ND start');}
+function openNativeNavigation(){Android.openPointOnGarmin(start.lat,start.lon,'ND start');}
+function sendRoute(){if(!currentRoute){$('garminStatus').textContent='Garmin: generate or load a route first.';return;}Android.sendRouteToGarminConnect();}
+window.ndGarminStatus=function(text){$('garminStatus').textContent=text;};
+function showMobile(mode){if(window.innerWidth>800)return;const controls=$('controls'),mapWrap=$('mapWrap');if(mode==='map'){controls.classList.add('collapsedMobile');mapWrap.style.height='78vh';setTimeout(()=>map.invalidateSize(),100);}else{controls.classList.remove('collapsedMobile');mapWrap.style.height='57vh';setTimeout(()=>map.invalidateSize(),100);}}
+window.addEventListener('load',init);window.addEventListener('resize',()=>setTimeout(()=>map&&map.invalidateSize(),80));
+</script>
+</body>
+</html>
