@@ -4,29 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-GARMIN_BRIDGE="$ROOT/app/src/main/java/com/ndroutefinder/mobile/GarminBridge.java"
-
-if [[ -f "$GARMIN_BRIDGE" ]]; then
-  python3 - "$GARMIN_BRIDGE" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-
-old = '        } catch (InvalidStateException e) {\n            emit("Garmin GPS listener unavailable: " + message(e));\n'
-new = '        } catch (InvalidStateException | ServiceUnavailableException e) {\n            emit("Garmin GPS listener unavailable: " + message(e));\n'
-
-if old in text:
-    path.write_text(text.replace(old, new, 1), encoding="utf-8")
-    print("Applied Garmin registerForAppEvents exception fix.")
-elif new in text:
-    print("Garmin registerForAppEvents exception fix already present.")
-else:
-    print("Warning: GarminBridge exception block did not match expected text.", file=sys.stderr)
-PY
-fi
-
 SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 if [[ ! -f local.properties && -d "$SDK_DIR" ]]; then
   printf 'sdk.dir=%s\n' "$SDK_DIR" > local.properties

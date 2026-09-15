@@ -17,13 +17,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class GarminBridge {
+    // Must match garmin_connectiq/*/manifest.xml.
     public static final String RECEIVER_APP_ID = "5e82dd20fec746dd923adccbed6070e0";
     public static final String DATAFIELD_APP_ID = "dec5fcce14a648369fe555933c4ab9b6";
 
     public interface Listener {
         void onStatus(String text);
-        void onLocation(double lat, double lon, double headingDeg,
-                        double accuracyM, double speedMps, long timestampMs);
     }
 
     private final Context context;
@@ -32,8 +31,6 @@ public final class GarminBridge {
     private final ExecutorService sdkExecutor = Executors.newSingleThreadExecutor();
     private ConnectIQ connectIQ;
     private boolean sdkReady;
-    private boolean telemetryEnabled;
-    private IQDevice telemetryDevice;
 
     public GarminBridge(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -76,29 +73,19 @@ public final class GarminBridge {
         sdkExecutor.execute(this::reportConnectedDevice);
     }
 
-    public void setTelemetryEnabled(boolean enabled) {
-        telemetryEnabled = enabled;
-        if (!sdkReady || connectIQ == null) {
-            if (enabled) emit("Garmin GPS requested; waiting for Connect IQ.");
-            return;
-        }
-        sdkExecutor.execute(() -> {
-            IQDevice device = chooseConnectedDevice();
-            if (device == null) {
-                if (enabled) emit("Garmin GPS: no connected watch found.");
-                return;
-            }
-            registerTelemetryListener(device);
-            sendTelemetryCommand(device, enabled);
-        });
-    }
-
     public void sendPointToCurrentActivity(double lat, double lon, String name) {
         sendPoint(DATAFIELD_APP_ID, lat, lon, name, false);
     }
 
     public void sendPointAndOpenNativeNavigation(double lat, double lon, String name) {
+        // Queue the target for ND Route Target first. If no activity is active yet,
+        // Garmin Connect keeps the message for the data field until the selected
+        // activity starts and the data field becomes active. The data field then
+        // calls routeTo() and makes the native activity calculate the route.
         sendPoint(DATAFIELD_APP_ID, lat, lon, name, false);
+
+        // Send the same target to the receiver and open it so the watch can show
+        // Garmin's native activity chooser (Walking, Run, Bike, ...).
         sendPoint(RECEIVER_APP_ID, lat, lon, name, true);
     }
 
@@ -127,6 +114,8 @@ public final class GarminBridge {
                         emit("Garmin: point message status: " + status + " — " + friendlyName(iqDevice))
                 );
                 if (openAfterSend) {
+                    // Phone messages are queued by Connect IQ. Give Garmin Connect a short moment
+                    // before prompting the user to open the receiver watch app.
                     mainHandler.postDelayed(() -> sdkExecutor.execute(() -> openReceiver(device)), 650L);
                 } else {
                     emit("Garmin: point sent to 'ND Route Target'. Keep that data field added to the active activity.");
@@ -139,83 +128,27 @@ public final class GarminBridge {
         });
     }
 
-    private void reportConnectedDevice() {
-        IQDevice device = chooseConnectedDevice();
-        if (device == null) {
-            emit("Garmin: SDK ready, but no connected watch is currently available.");
-            return;
-        }
-        registerTelemetryListener(device);
-        emit("Garmin connected: " + friendlyName(device));
-        if (telemetryEnabled) sendTelemetryCommand(device, true);
-    }
-
-    private void registerTelemetryListener(IQDevice device) {
-        if (!sdkReady || connectIQ == null || device == null) return;
-        IQApp app = new IQApp(DATAFIELD_APP_ID);
-        try {
-            if (telemetryDevice != null) {
-                try {
-                    connectIQ.unregisterForApplicationEvents(telemetryDevice, app);
-                } catch (Exception ignored) {
-                }
-            }
-            connectIQ.registerForAppEvents(device, app, (iqDevice, iqApp, message, status) -> {
-                if (message == null) return;
-                for (Object item : message) handleWatchMessage(item);
-            });
-            telemetryDevice = device;
-        } catch (InvalidStateException | ServiceUnavailableException e) {
-            emit("Garmin GPS listener unavailable: " + message(e));
-        } catch (RuntimeException e) {
-            emit("Garmin GPS listener failed: " + message(e));
-        }
-    }
-
-    private void handleWatchMessage(Object item) {
-        if (!(item instanceof Map)) return;
-        Map<?, ?> map = (Map<?, ?>) item;
-        String type = text(map.get("type"));
-        if (!"location".equalsIgnoreCase(type)) return;
-
-        double lat = number(map.get("lat"), Double.NaN);
-        double lon = number(map.get("lon"), Double.NaN);
-        if (!Double.isFinite(lat) || !Double.isFinite(lon)) return;
-        double heading = number(map.get("heading"), Double.NaN);
-        double accuracy = number(map.get("accuracy"), Double.NaN);
-        double speed = number(map.get("speed"), Double.NaN);
-        long timestamp = (long) number(map.get("time"), System.currentTimeMillis());
-        mainHandler.post(() -> listener.onLocation(lat, lon, heading, accuracy, speed, timestamp));
-    }
-
-    private void sendTelemetryCommand(IQDevice device, boolean enabled) {
-        if (!sdkReady || connectIQ == null || device == null) return;
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("type", "telemetry");
-        payload.put("enabled", enabled);
-        payload.put("source", "nd_route_finder_mobile");
-        try {
-            connectIQ.sendMessage(device, new IQApp(DATAFIELD_APP_ID), payload, (iqDevice, iqApp, status) -> {
-                if (enabled) emit("Garmin GPS: telemetry request " + status + ". Start an activity containing ND Route Target.");
-            });
-        } catch (InvalidStateException | ServiceUnavailableException e) {
-            if (enabled) emit("Garmin GPS request failed: " + message(e));
-        } catch (RuntimeException e) {
-            if (enabled) emit("Garmin GPS request failed: " + message(e));
-        }
-    }
-
     private void openReceiver(IQDevice device) {
         if (!sdkReady || connectIQ == null) return;
         IQApp app = new IQApp(RECEIVER_APP_ID);
         try {
-            connectIQ.openApplication(device, app, (iqDevice, iqApp, status) ->
-                    emit("Garmin: watch launch status: " + status
-                            + ". Accept the prompt on the watch; Garmin will then offer native navigation/activity choices."));
+            connectIQ.openApplication(device, app, (iqDevice, iqApp, status) -> {
+                emit("Garmin: watch launch status: " + status
+                        + ". Accept the prompt on the watch; Garmin will then offer native navigation/activity choices.");
+            });
         } catch (InvalidStateException | ServiceUnavailableException e) {
             emit("Garmin: could not open receiver app: " + message(e));
         } catch (RuntimeException e) {
             emit("Garmin: could not open receiver app: " + message(e));
+        }
+    }
+
+    private void reportConnectedDevice() {
+        IQDevice device = chooseConnectedDevice();
+        if (device == null) {
+            emit("Garmin: SDK ready, but no connected watch is currently available.");
+        } else {
+            emit("Garmin connected: " + friendlyName(device));
         }
     }
 
@@ -226,12 +159,15 @@ public final class GarminBridge {
             if (connected != null && !connected.isEmpty()) return connected.get(0);
         } catch (InvalidStateException | ServiceUnavailableException ignored) {
         }
+
         try {
             List<IQDevice> known = connectIQ.getKnownDevices();
             if (known != null) {
                 for (IQDevice device : known) {
                     try {
-                        if (connectIQ.getDeviceStatus(device) == IQDevice.IQDeviceStatus.CONNECTED) return device;
+                        if (connectIQ.getDeviceStatus(device) == IQDevice.IQDeviceStatus.CONNECTED) {
+                            return device;
+                        }
                     } catch (Exception ignored) {
                     }
                 }
@@ -239,18 +175,6 @@ public final class GarminBridge {
         } catch (InvalidStateException | ServiceUnavailableException ignored) {
         }
         return null;
-    }
-
-    private static double number(Object value, double fallback) {
-        if (value instanceof Number) return ((Number) value).doubleValue();
-        if (value != null) {
-            try { return Double.parseDouble(String.valueOf(value)); } catch (RuntimeException ignored) {}
-        }
-        return fallback;
-    }
-
-    private static String text(Object value) {
-        return value == null ? "" : String.valueOf(value);
     }
 
     private static String friendlyName(IQDevice device) {
@@ -265,16 +189,15 @@ public final class GarminBridge {
 
     public void shutdown() {
         if (connectIQ != null) {
-            if (telemetryDevice != null) {
-                try {
-                    connectIQ.unregisterForApplicationEvents(telemetryDevice, new IQApp(DATAFIELD_APP_ID));
-                } catch (Exception ignored) {
-                }
+            try {
+                connectIQ.unregisterAllForEvents();
+            } catch (Exception ignored) {
             }
-            try { connectIQ.unregisterAllForEvents(); } catch (Exception ignored) {}
-            try { connectIQ.shutdown(context); } catch (Exception ignored) {}
+            try {
+                connectIQ.shutdown(context);
+            } catch (Exception ignored) {
+            }
         }
-        telemetryDevice = null;
         sdkReady = false;
         sdkExecutor.shutdownNow();
     }

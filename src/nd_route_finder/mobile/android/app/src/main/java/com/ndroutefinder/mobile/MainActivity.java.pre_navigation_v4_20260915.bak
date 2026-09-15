@@ -258,36 +258,6 @@ public final class MainActivity extends Activity implements SensorEventListener 
         public void sendRouteToGarminConnect() {
             runOnUiThread(MainActivity.this::sendCurrentRouteToGarminConnect);
         }
-
-        @JavascriptInterface
-        public void setCurrentRouteFromPoints(String name, String pointsJson) {
-            try {
-                JSONArray arr = new JSONArray(pointsJson == null ? "[]" : pointsJson);
-                java.util.List<GpxCodec.Point> points = new java.util.ArrayList<>();
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONArray p = arr.optJSONArray(i);
-                    if (p == null || p.length() < 2) continue;
-                    double lat = p.optDouble(0, Double.NaN);
-                    double lon = p.optDouble(1, Double.NaN);
-                    if (!validCoordinate(lat, lon)) continue;
-                    Double elevation = null;
-                    if (p.length() > 2 && !p.isNull(2)) {
-                        double ele = p.optDouble(2, Double.NaN);
-                        if (Double.isFinite(ele)) elevation = ele;
-                    }
-                    points.add(new GpxCodec.Point(lat, lon, elevation));
-                }
-                if (points.size() < 2) return;
-                String routeName = (name == null || name.trim().isEmpty()) ? "ND route" : name.trim();
-                String gpx = GpxCodec.buildTrack(routeName, points);
-                GpxCodec.Track track = GpxCodec.parse(gpx, routeName);
-                currentTrack = track;
-                cacheCurrentRoute(track);
-            } catch (Exception e) {
-                callJs("window.ndGarminStatus && window.ndGarminStatus("
-                        + JSONObject.quote("Could not update reversed route: " + message(e)) + ");");
-            }
-        }
     }
 
     @Override

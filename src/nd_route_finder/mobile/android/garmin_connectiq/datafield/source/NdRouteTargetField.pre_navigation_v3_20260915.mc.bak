@@ -1,46 +1,26 @@
 import Toybox.Activity;
 import Toybox.Communications;
-import Toybox.Lang;
-import Toybox.Math;
 import Toybox.Position;
-import Toybox.System;
 import Toybox.WatchUi;
-
-class NdTelemetryListener extends Communications.ConnectionListener {
-    function initialize() {
-        ConnectionListener.initialize();
-    }
-
-    function onComplete() as Void {
-    }
-
-    function onError() as Void {
-    }
-}
 
 class NdRouteTargetField extends WatchUi.SimpleDataField {
     var _label = "ND target ready";
     var _pendingLocation = null;
     var _pendingName = null;
     var _remainingRouteAttempts = 0;
-    var _telemetryEnabled = false;
-    var _telemetryListener;
-    var _lastTelemetryMs = 0;
 
     function initialize() {
         SimpleDataField.initialize();
         label = "ND Route";
-        _telemetryListener = new NdTelemetryListener();
         Communications.registerForPhoneAppMessages(method(:onPhoneMessage));
     }
 
     function compute(info as Activity.Info) {
+        // compute() is called by Garmin once per second for an active data field.
+        // If routeTo() was called before the newly-selected activity was ready,
+        // keep retrying here instead of requiring a second tap on the phone.
         if (_pendingLocation != null && _remainingRouteAttempts > 0) {
             _attemptRoute();
-        }
-
-        if (_telemetryEnabled) {
-            _sendTelemetry(info);
         }
 
         return _label;
@@ -49,19 +29,13 @@ class NdRouteTargetField extends WatchUi.SimpleDataField {
     function onPhoneMessage(message as Communications.PhoneAppMessage) as Void {
         try {
             if (message == null || message.data == null) {
-                return;
-            }
-
-            var data = message.data;
-            var type = data["type"];
-            if (type != null && type.equals("telemetry")) {
-                var enabled = data["enabled"];
-                _telemetryEnabled = enabled == true;
-                _label = _telemetryEnabled ? "GPS → phone" : "ND target ready";
+                _clearPendingRoute();
+                _label = "No target";
                 WatchUi.requestUpdate();
                 return;
             }
 
+            var data = message.data;
             _pendingLocation = new Position.Location({
                 :latitude => data["lat"],
                 :longitude => data["lon"],
@@ -70,6 +44,9 @@ class NdRouteTargetField extends WatchUi.SimpleDataField {
 
             var pointName = data["name"];
             _pendingName = pointName == null ? "Navigating" : pointName;
+
+            // One immediate attempt plus subsequent once-per-second retries
+            // from compute(), for ten attempts total.
             _remainingRouteAttempts = 10;
             _label = "Waiting for activity";
             _attemptRoute();
@@ -78,48 +55,6 @@ class NdRouteTargetField extends WatchUi.SimpleDataField {
             _clearPendingRoute();
             _label = "Target error";
             WatchUi.requestUpdate();
-        }
-    }
-
-    function _sendTelemetry(info as Activity.Info) as Void {
-        if (info == null || info.currentLocation == null) {
-            return;
-        }
-
-        try {
-            var now = System.getTimer();
-            if (now - _lastTelemetryMs < 800) {
-                return;
-            }
-            _lastTelemetryMs = now;
-
-            var degrees = info.currentLocation.toDegrees();
-            if (degrees == null || degrees.size() < 2) {
-                return;
-            }
-
-            var heading = null;
-            if (info.currentHeading != null) {
-                heading = info.currentHeading * 180.0 / Math.PI;
-            } else if (info.track != null) {
-                heading = info.track * 180.0 / Math.PI;
-            }
-
-            var payload = {
-                "type" => "location",
-                "lat" => degrees[0],
-                "lon" => degrees[1]
-            };
-            if (heading != null) {
-                payload["heading"] = heading;
-            }
-            if (info.currentSpeed != null) {
-                payload["speed"] = info.currentSpeed;
-            }
-
-            Communications.transmit(payload, {}, _telemetryListener);
-        } catch (error) {
-            // Telemetry is optional; never interfere with the active activity.
         }
     }
 

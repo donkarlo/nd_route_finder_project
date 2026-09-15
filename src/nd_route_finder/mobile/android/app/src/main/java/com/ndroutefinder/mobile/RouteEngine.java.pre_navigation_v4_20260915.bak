@@ -28,7 +28,7 @@ public final class RouteEngine {
         void onFailure(String message);
     }
 
-    private static final String USER_AGENT = "nd_route_finder_mobile/4.0 (personal route planner)";
+    private static final String USER_AGENT = "nd_route_finder_mobile/3.0 (personal route planner)";
     private static final String BROUTER_URL = "https://brouter.de/brouter";
     private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -47,32 +47,43 @@ public final class RouteEngine {
                 String clean = query == null ? "" : query.trim();
                 if (clean.length() < 2) throw new IllegalArgumentException("Type at least two characters.");
 
+                StringBuilder url = new StringBuilder(NOMINATIM_URL)
+                        .append("?format=jsonv2&limit=12&addressdetails=0&q=")
+                        .append(URLEncoder.encode(clean, "UTF-8"));
+
                 boolean haveOrigin = validCoordinate(originLat, originLon);
+                if (haveOrigin) {
+                    double lonSpan = 0.85;
+                    double latSpan = 0.65;
+                    url.append("&viewbox=")
+                            .append(String.format(Locale.US, "%.6f,%.6f,%.6f,%.6f",
+                                    originLon - lonSpan, originLat + latSpan,
+                                    originLon + lonSpan, originLat - latSpan))
+                            .append("&bounded=0");
+                }
+
+                String body = httpGet(url.toString(), "application/json");
+                JSONArray raw = new JSONArray(body);
                 List<SearchItem> items = new ArrayList<>();
+                for (int i = 0; i < raw.length(); i++) {
+                    JSONObject item = raw.optJSONObject(i);
+                    if (item == null) continue;
+                    try {
+                        double lat = Double.parseDouble(item.getString("lat"));
+                        double lon = Double.parseDouble(item.getString("lon"));
+                        if (!validCoordinate(lat, lon)) continue;
+                        double distance = haveOrigin ? distanceMeters(originLat, originLon, lat, lon) : Double.NaN;
+                        items.add(new SearchItem(lat, lon, item.optString("display_name", "Result"), distance));
+                    } catch (RuntimeException ignored) {
+                    }
+                }
 
                 if (haveOrigin) {
-                    // Local-first: ask Nominatim for matches inside a tight box around
-                    // the current/start position before considering farther results.
-                    appendNominatimResults(clean, originLat, originLon,
-                            0.34, 0.25, true, 35, items);
-
-                    // Keep recall for sparse/ambiguous searches. The final ordering is
-                    // still strictly by distance from the selected GPS/start position.
-                    if (items.size() < 12) {
-                        appendNominatimResults(clean, originLat, originLon,
-                                1.25, 0.90, false, 35, items);
-                    }
-
                     items.sort(Comparator.comparingDouble(a -> a.distanceM));
-                } else {
-                    appendNominatimResults(clean, Double.NaN, Double.NaN,
-                            0.0, 0.0, false, 25, items);
                 }
 
                 JSONArray out = new JSONArray();
-                int count = Math.min(items.size(), 20);
-                for (int i = 0; i < count; i++) {
-                    SearchItem item = items.get(i);
+                for (SearchItem item : items) {
                     JSONObject compact = new JSONObject();
                     compact.put("lat", item.lat);
                     compact.put("lon", item.lon);
@@ -85,65 +96,6 @@ public final class RouteEngine {
                 callback.onFailure(readable(e));
             }
         });
-    }
-
-    private void appendNominatimResults(String clean,
-                                        double originLat,
-                                        double originLon,
-                                        double lonSpan,
-                                        double latSpan,
-                                        boolean bounded,
-                                        int limit,
-                                        List<SearchItem> items) throws Exception {
-        StringBuilder url = new StringBuilder(NOMINATIM_URL)
-                .append("?format=jsonv2&addressdetails=0&limit=")
-                .append(limit)
-                .append("&q=")
-                .append(URLEncoder.encode(clean, "UTF-8"));
-
-        boolean haveOrigin = validCoordinate(originLat, originLon);
-        if (haveOrigin && lonSpan > 0.0 && latSpan > 0.0) {
-            url.append("&viewbox=")
-                    .append(String.format(Locale.US, "%.6f,%.6f,%.6f,%.6f",
-                            originLon - lonSpan, originLat + latSpan,
-                            originLon + lonSpan, originLat - latSpan))
-                    .append("&bounded=")
-                    .append(bounded ? "1" : "0");
-        }
-
-        String body = httpGet(url.toString(), "application/json");
-        JSONArray raw = new JSONArray(body);
-        for (int i = 0; i < raw.length(); i++) {
-            JSONObject item = raw.optJSONObject(i);
-            if (item == null) continue;
-            try {
-                double lat = Double.parseDouble(item.getString("lat"));
-                double lon = Double.parseDouble(item.getString("lon"));
-                if (!validCoordinate(lat, lon)) continue;
-                String label = item.optString("display_name", "Result");
-                double distance = haveOrigin
-                        ? distanceMeters(originLat, originLon, lat, lon)
-                        : Double.NaN;
-
-                boolean duplicate = false;
-                for (SearchItem existing : items) {
-                    if (Math.abs(existing.lat - lat) < 1e-7
-                            && Math.abs(existing.lon - lon) < 1e-7) {
-                        duplicate = true;
-                        break;
-                    }
-                    if (existing.label.equalsIgnoreCase(label)
-                            && Double.isFinite(existing.distanceM)
-                            && Double.isFinite(distance)
-                            && Math.abs(existing.distanceM - distance) < 5.0) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate) items.add(new SearchItem(lat, lon, label, distance));
-            } catch (RuntimeException ignored) {
-            }
-        }
     }
 
     private static final class SearchItem {

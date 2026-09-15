@@ -9,7 +9,6 @@
         minApiLevel="5.2.0">
         <iq:products>
             <iq:product id="fenix847mm"/>
-            <iq:product id="fenix8pro47mm"/>
             <iq:product id="fenix843mm"/>
             <iq:product id="fenix8solar47mm"/>
             <iq:product id="fenix8solar51mm"/>
@@ -17,7 +16,6 @@
         <iq:permissions>
             <iq:uses-permission id="Communications"/>
             <iq:uses-permission id="ActivityControl"/>
-            <iq:uses-permission id="Positioning"/>
         </iq:permissions>
         <iq:languages>
             <iq:language>eng</iq:language>

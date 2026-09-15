@@ -3,8 +3,10 @@ package com.ndroutefinder.mobile;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -17,6 +19,8 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import javax.net.ssl.HttpsURLConnection;
+
 public final class RouteEngine {
     public interface ResultCallback {
         void onSuccess(GpxCodec.Track track, boolean constraintFallback, String note);
@@ -28,7 +32,7 @@ public final class RouteEngine {
         void onFailure(String message);
     }
 
-    private static final String USER_AGENT = "nd_route_finder_mobile/4.0 (personal route planner)";
+    private static final String USER_AGENT = "nd_route_finder_mobile/1.0 (personal route planner)";
     private static final String BROUTER_URL = "https://brouter.de/brouter";
     private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -38,46 +42,22 @@ public final class RouteEngine {
     }
 
     public void searchPlaces(String query, SearchCallback callback) {
-        searchPlaces(query, Double.NaN, Double.NaN, callback);
-    }
-
-    public void searchPlaces(String query, double originLat, double originLon, SearchCallback callback) {
         executor.execute(() -> {
             try {
                 String clean = query == null ? "" : query.trim();
                 if (clean.length() < 2) throw new IllegalArgumentException("Type at least two characters.");
-
-                boolean haveOrigin = validCoordinate(originLat, originLon);
-                List<SearchItem> items = new ArrayList<>();
-
-                if (haveOrigin) {
-                    // Local-first: ask Nominatim for matches inside a tight box around
-                    // the current/start position before considering farther results.
-                    appendNominatimResults(clean, originLat, originLon,
-                            0.34, 0.25, true, 35, items);
-
-                    // Keep recall for sparse/ambiguous searches. The final ordering is
-                    // still strictly by distance from the selected GPS/start position.
-                    if (items.size() < 12) {
-                        appendNominatimResults(clean, originLat, originLon,
-                                1.25, 0.90, false, 35, items);
-                    }
-
-                    items.sort(Comparator.comparingDouble(a -> a.distanceM));
-                } else {
-                    appendNominatimResults(clean, Double.NaN, Double.NaN,
-                            0.0, 0.0, false, 25, items);
-                }
-
+                String url = NOMINATIM_URL + "?format=jsonv2&limit=6&addressdetails=0&q="
+                        + URLEncoder.encode(clean, "UTF-8");
+                String body = httpGet(url, "application/json");
+                JSONArray raw = new JSONArray(body);
                 JSONArray out = new JSONArray();
-                int count = Math.min(items.size(), 20);
-                for (int i = 0; i < count; i++) {
-                    SearchItem item = items.get(i);
+                for (int i = 0; i < raw.length(); i++) {
+                    JSONObject item = raw.optJSONObject(i);
+                    if (item == null) continue;
                     JSONObject compact = new JSONObject();
-                    compact.put("lat", item.lat);
-                    compact.put("lon", item.lon);
-                    compact.put("label", item.label);
-                    if (Double.isFinite(item.distanceM)) compact.put("distanceM", item.distanceM);
+                    compact.put("lat", Double.parseDouble(item.getString("lat")));
+                    compact.put("lon", Double.parseDouble(item.getString("lon")));
+                    compact.put("label", item.optString("display_name", "Result"));
                     out.put(compact);
                 }
                 callback.onSuccess(out);
@@ -87,76 +67,6 @@ public final class RouteEngine {
         });
     }
 
-    private void appendNominatimResults(String clean,
-                                        double originLat,
-                                        double originLon,
-                                        double lonSpan,
-                                        double latSpan,
-                                        boolean bounded,
-                                        int limit,
-                                        List<SearchItem> items) throws Exception {
-        StringBuilder url = new StringBuilder(NOMINATIM_URL)
-                .append("?format=jsonv2&addressdetails=0&limit=")
-                .append(limit)
-                .append("&q=")
-                .append(URLEncoder.encode(clean, "UTF-8"));
-
-        boolean haveOrigin = validCoordinate(originLat, originLon);
-        if (haveOrigin && lonSpan > 0.0 && latSpan > 0.0) {
-            url.append("&viewbox=")
-                    .append(String.format(Locale.US, "%.6f,%.6f,%.6f,%.6f",
-                            originLon - lonSpan, originLat + latSpan,
-                            originLon + lonSpan, originLat - latSpan))
-                    .append("&bounded=")
-                    .append(bounded ? "1" : "0");
-        }
-
-        String body = httpGet(url.toString(), "application/json");
-        JSONArray raw = new JSONArray(body);
-        for (int i = 0; i < raw.length(); i++) {
-            JSONObject item = raw.optJSONObject(i);
-            if (item == null) continue;
-            try {
-                double lat = Double.parseDouble(item.getString("lat"));
-                double lon = Double.parseDouble(item.getString("lon"));
-                if (!validCoordinate(lat, lon)) continue;
-                String label = item.optString("display_name", "Result");
-                double distance = haveOrigin
-                        ? distanceMeters(originLat, originLon, lat, lon)
-                        : Double.NaN;
-
-                boolean duplicate = false;
-                for (SearchItem existing : items) {
-                    if (Math.abs(existing.lat - lat) < 1e-7
-                            && Math.abs(existing.lon - lon) < 1e-7) {
-                        duplicate = true;
-                        break;
-                    }
-                    if (existing.label.equalsIgnoreCase(label)
-                            && Double.isFinite(existing.distanceM)
-                            && Double.isFinite(distance)
-                            && Math.abs(existing.distanceM - distance) < 5.0) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate) items.add(new SearchItem(lat, lon, label, distance));
-            } catch (RuntimeException ignored) {
-            }
-        }
-    }
-
-    private static final class SearchItem {
-        final double lat;
-        final double lon;
-        final String label;
-        final double distanceM;
-        SearchItem(double lat, double lon, String label, double distanceM) {
-            this.lat = lat; this.lon = lon; this.label = label; this.distanceM = distanceM;
-        }
-    }
-
-    /** Existing round-trip planner. */
     public void generate(String requestJson, ResultCallback callback) {
         executor.execute(() -> {
             try {
@@ -179,7 +89,9 @@ public final class RouteEngine {
                 }
 
                 if (scored.isEmpty()) {
-                    throw new IllegalStateException(lastError == null ? "BRouter returned no usable route." : readable(lastError));
+                    throw new IllegalStateException(
+                            lastError == null ? "BRouter returned no usable route." : readable(lastError)
+                    );
                 }
 
                 Collections.sort(scored, Comparator.comparingDouble(item -> item.score));
@@ -197,45 +109,11 @@ public final class RouteEngine {
                     note = String.format(Locale.US,
                             "Generated route: %.2f km%s.",
                             best.track.distanceM / 1000.0,
-                            best.track.maxGradePercent == null ? ""
+                            best.track.maxGradePercent == null
+                                    ? ""
                                     : String.format(Locale.US, ", max slope %.1f%%", best.track.maxGradePercent));
                 }
                 callback.onSuccess(best.track, fallback, note);
-            } catch (Exception e) {
-                callback.onFailure(readable(e));
-            }
-        });
-    }
-
-    /** Point-to-point/through-waypoints routing used while already travelling. */
-    public void navigate(String requestJson, ResultCallback callback) {
-        executor.execute(() -> {
-            try {
-                JSONObject json = new JSONObject(requestJson);
-                double lat = json.getDouble("originLat");
-                double lon = json.getDouble("originLon");
-                if (!validCoordinate(lat, lon)) throw new IllegalArgumentException("Current position is invalid.");
-                String activity = json.optString("activity", "cycling").toLowerCase(Locale.ROOT);
-                JSONArray arr = json.optJSONArray("points");
-                if (arr == null || arr.length() < 1) throw new IllegalArgumentException("Add a destination or route point first.");
-
-                List<GpxCodec.Point> points = new ArrayList<>();
-                points.add(new GpxCodec.Point(lat, lon, null));
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONObject p = arr.optJSONObject(i);
-                    if (p == null) continue;
-                    double pLat = p.optDouble("lat", Double.NaN);
-                    double pLon = p.optDouble("lon", Double.NaN);
-                    if (validCoordinate(pLat, pLon)) points.add(new GpxCodec.Point(pLat, pLon, null));
-                }
-                if (points.size() < 2) throw new IllegalArgumentException("No valid destination was supplied.");
-
-                String name = "ND_nav_" + activity;
-                String gpx = requestBrouter(points, profileFor(activity), name);
-                GpxCodec.Track track = GpxCodec.parse(gpx, name);
-                String note = String.format(Locale.US, "Navigation route: %.2f km via %d point%s.",
-                        track.distanceM / 1000.0, points.size() - 1, points.size() == 2 ? "" : "s");
-                callback.onSuccess(track, false, note);
             } catch (Exception e) {
                 callback.onFailure(readable(e));
             }
@@ -263,7 +141,7 @@ public final class RouteEngine {
         static Request fromJson(JSONObject json) throws Exception {
             double lat = json.getDouble("startLat");
             double lon = json.getDouble("startLon");
-            if (!validCoordinate(lat, lon)) {
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
                 throw new IllegalArgumentException("Start coordinates are outside valid latitude/longitude ranges.");
             }
             String activity = json.optString("activity", "cycling").toLowerCase(Locale.ROOT);
@@ -281,9 +159,10 @@ public final class RouteEngine {
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject item = arr.optJSONObject(i);
                     if (item == null) continue;
-                    double wLat = item.optDouble("lat", Double.NaN);
-                    double wLon = item.optDouble("lon", Double.NaN);
-                    if (validCoordinate(wLat, wLon)) waypoints.add(new GpxCodec.Point(wLat, wLon, null));
+                    double wLat = item.getDouble("lat");
+                    double wLon = item.getDouble("lon");
+                    if (wLat < -90 || wLat > 90 || wLon < -180 || wLon > 180) continue;
+                    waypoints.add(new GpxCodec.Point(wLat, wLon, null));
                 }
             }
             return new Request(lat, lon, activity, distanceKm, maxGrade, waypoints);
@@ -294,8 +173,11 @@ public final class RouteEngine {
         final GpxCodec.Track track;
         final double score;
         final boolean withinSlope;
+
         ScoredTrack(GpxCodec.Track track, double score, boolean withinSlope) {
-            this.track = track; this.score = score; this.withinSlope = withinSlope;
+            this.track = track;
+            this.score = score;
+            this.withinSlope = withinSlope;
         }
     }
 
@@ -316,6 +198,8 @@ public final class RouteEngine {
         List<List<GpxCodec.Point>> out = new ArrayList<>();
         if (request.waypoints.isEmpty()) {
             double targetM = request.targetDistanceKm * 1000.0;
+            // A three-corner loop with this radius typically lands near the requested distance
+            // after the road/trail network adds realistic detours.
             double baseRadius = Math.max(250.0, targetM / 5.2);
             double[] factors = {0.72, 0.88, 1.02, 1.18, 1.34};
             double[] rotations = {15.0, 73.0, 137.0, 211.0, 287.0};
@@ -384,7 +268,8 @@ public final class RouteEngine {
                 + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing));
         double lon2 = lon1 + Math.atan2(
                 Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
-                Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2));
+                Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2)
+        );
         return new GpxCodec.Point(Math.toDegrees(lat2), normalizeLongitude(Math.toDegrees(lon2)), null);
     }
 
@@ -405,7 +290,8 @@ public final class RouteEngine {
         String url = BROUTER_URL
                 + "?lonlats=" + URLEncoder.encode(lonLats.toString(), "UTF-8")
                 + "&profile=" + URLEncoder.encode(profile, "UTF-8")
-                + "&alternativeidx=0&format=gpx&trackname=" + URLEncoder.encode(trackName, "UTF-8");
+                + "&alternativeidx=0&format=gpx&trackname="
+                + URLEncoder.encode(trackName, "UTF-8");
         return httpGet(url, "application/gpx+xml,application/xml,text/xml,*/*");
     }
 
@@ -413,27 +299,12 @@ public final class RouteEngine {
         switch (activity) {
             case "hiking":
             case "walking":
+                // Hiking profile deliberately permits paths that cycling profiles reject.
                 return "hiking-mountain";
             case "cycling":
             default:
                 return "trekking";
         }
-    }
-
-    private static boolean validCoordinate(double lat, double lon) {
-        return Double.isFinite(lat) && Double.isFinite(lon)
-                && lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0;
-    }
-
-    private static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
-        double r = 6_371_008.8;
-        double p1 = Math.toRadians(lat1);
-        double p2 = Math.toRadians(lat2);
-        double dp = Math.toRadians(lat2 - lat1);
-        double dl = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(dp / 2.0) * Math.sin(dp / 2.0)
-                + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2.0) * Math.sin(dl / 2.0);
-        return 2.0 * r * Math.asin(Math.min(1.0, Math.sqrt(a)));
     }
 
     private static String httpGet(String urlText, String accept) throws Exception {
@@ -456,14 +327,15 @@ public final class RouteEngine {
         String body = new String(out.toByteArray(), StandardCharsets.UTF_8);
         if (code < 200 || code >= 300) {
             String compact = body.replaceAll("\\s+", " ").trim();
-            if (compact.length() > 260) compact = compact.substring(0, 260) + "…";
-            throw new IllegalStateException("HTTP " + code + (compact.isEmpty() ? "" : ": " + compact));
+            if (compact.length() > 220) compact = compact.substring(0, 220) + "…";
+            throw new IllegalStateException("Routing server HTTP " + code + (compact.isEmpty() ? "" : ": " + compact));
         }
         return body;
     }
 
-    private static String readable(Throwable e) {
-        String message = e.getMessage();
-        return message == null || message.trim().isEmpty() ? e.getClass().getSimpleName() : message;
+    private static String readable(Throwable error) {
+        String message = error.getMessage();
+        if (message == null || message.trim().isEmpty()) message = error.getClass().getSimpleName();
+        return message;
     }
 }

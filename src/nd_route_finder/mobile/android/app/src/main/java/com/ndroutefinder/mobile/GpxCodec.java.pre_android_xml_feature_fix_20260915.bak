@@ -83,19 +83,11 @@ public final class GpxCodec {
     private GpxCodec() {}
 
     public static Track parse(String gpx, String fallbackName) throws Exception {
-        String upperGpx = gpx.toUpperCase(Locale.ROOT);
-        if (upperGpx.contains("<!DOCTYPE") || upperGpx.contains("<!ENTITY")) {
-            throw new IllegalArgumentException("GPX files containing DOCTYPE or ENTITY declarations are not supported.");
-        }
-
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(false);
-        setXmlFeatureIfSupported(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
-        setXmlFeatureIfSupported(factory, "http://xml.org/sax/features/external-general-entities", false);
-        setXmlFeatureIfSupported(factory, "http://xml.org/sax/features/external-parameter-entities", false);
-        setXmlFeatureIfSupported(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-        factory.setExpandEntityReferences(false);
-
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
         Document doc = factory.newDocumentBuilder().parse(
                 new ByteArrayInputStream(gpx.getBytes(StandardCharsets.UTF_8))
         );
@@ -110,15 +102,6 @@ public final class GpxCodec {
             throw new IllegalArgumentException("GPX does not contain a route with at least two points.");
         }
         return new Track(points, gpx, name);
-    }
-
-    private static void setXmlFeatureIfSupported(DocumentBuilderFactory factory, String feature, boolean value) {
-        try {
-            factory.setFeature(feature, value);
-        } catch (Exception ignored) {
-            // Android XML implementations do not all support the same feature set.
-            // The explicit DOCTYPE/ENTITY rejection above keeps local GPX loading safe.
-        }
     }
 
     private static List<Point> readPoints(Document doc, String tag) {
