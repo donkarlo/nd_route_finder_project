@@ -40,3 +40,6 @@ src/*.egg-info/
 /config/
 prompt/
 cache/
+
+# Ignore any file or directory named prompt at any depth
+prompt
