@@ -131,7 +131,42 @@ fi
 
 echo
 echo "Could not auto-connect to a paired Wireless debugging device."
-echo "APK built successfully, but no adb device is connected."
-echo "Turn on Wireless debugging and run this builder again."
+echo "If the phone is already paired, keep Wireless debugging ON and run this script again."
+echo
+echo "If pairing was lost, this script can pair it now."
+if [[ -t 0 ]]; then
+  read -r -p "Pair now? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES)
+      echo "On the phone open: Developer options > Wireless debugging > Pair device with pairing code"
+      read -r -p "Pairing IP:port shown on the phone: " pair_addr
+      read -r -p "6-digit pairing code: " pair_code
+
+      if [[ ! "$pair_addr" =~ ^[0-9A-Fa-f:.]+:[0-9]+$ ]]; then
+        echo "Invalid pairing address: $pair_addr" >&2
+        exit 3
+      fi
+      if [[ ! "$pair_code" =~ ^[0-9]{6}$ ]]; then
+        echo "Invalid pairing code." >&2
+        exit 3
+      fi
+
+      "$ADB" pair "$pair_addr" "$pair_code"
+
+      echo "Pairing completed. Waiting for the normal Wireless debugging endpoint..."
+      sleep 2
+      if try_wireless_connect; then
+        install_if_connected
+        exit $?
+      fi
+
+      echo "Paired, but could not connect automatically yet."
+      echo "Keep Wireless debugging ON and run:"
+      echo "  bash build_and_install.sh"
+      exit 4
+      ;;
+  esac
+fi
+
 echo "APK is ready at: $APK"
 exit 0

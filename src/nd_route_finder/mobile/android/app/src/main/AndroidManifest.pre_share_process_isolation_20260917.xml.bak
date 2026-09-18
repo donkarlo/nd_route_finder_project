@@ -39,7 +39,6 @@
             android:exported="true"
             android:label="ND Route → Garmin"
             android:noHistory="true"
-            android:process=":maps_share"
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.Light.NoActionBar">
             <intent-filter>

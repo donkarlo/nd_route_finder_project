@@ -34,21 +34,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".MapsShareActivity"
-            android:exported="true"
-            android:label="ND Route → Garmin"
-            android:noHistory="true"
-            android:process=":maps_share"
-            android:screenOrientation="portrait"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-        </activity>
-
         <provider
             android:name=".GpxProvider"
             android:authorities="com.ndroutefinder.garmin.files"

@@ -133,10 +133,8 @@ public final class MainActivity extends Activity implements SensorEventListener 
     private final class NativeBridge {
         @JavascriptInterface
         public void searchPlaces(String query) {
-            Location location = bestKnownLocation();
-            double lat = location == null ? Double.NaN : location.getLatitude();
-            double lon = location == null ? Double.NaN : location.getLongitude();
-            searchPlacesNear("planner", query, lat, lon);
+            double[] origin = selectedSearchOrigin();
+            searchPlacesNear("planner", query, origin[0], origin[1]);
         }
 
         @JavascriptInterface
@@ -145,11 +143,9 @@ public final class MainActivity extends Activity implements SensorEventListener 
             double lat = originLat;
             double lon = originLon;
             if (!validCoordinate(lat, lon)) {
-                Location fallback = bestKnownLocation();
-                if (fallback != null) {
-                    lat = fallback.getLatitude();
-                    lon = fallback.getLongitude();
-                }
+                double[] fallback = selectedSearchOrigin();
+                lat = fallback[0];
+                lon = fallback[1];
             }
             routeEngine.searchPlaces(query, lat, lon, new RouteEngine.SearchCallback() {
                 @Override
@@ -380,6 +376,19 @@ public final class MainActivity extends Activity implements SensorEventListener 
                 callJs("window.ndPositionWaiting && window.ndPositionWaiting('phone');");
             }
         }
+    }
+
+    private double[] selectedSearchOrigin() {
+        if ("garmin".equals(locationSource) && validCoordinate(garminLat, garminLon)) {
+            return new double[]{garminLat, garminLon};
+        }
+
+        Location phone = lastPhoneLocation != null ? lastPhoneLocation : bestKnownLocation();
+        if (phone != null && validCoordinate(phone.getLatitude(), phone.getLongitude())) {
+            return new double[]{phone.getLatitude(), phone.getLongitude()};
+        }
+
+        return new double[]{Double.NaN, Double.NaN};
     }
 
     private void publishPhoneLocation(Location location) {
