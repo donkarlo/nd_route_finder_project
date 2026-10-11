@@ -175,7 +175,7 @@ let map3d = null, map3dReady = false, use3D = false;
 let map3dFollowBtn = null, map3dBack2DBtn = null;
 let plannerBusy = false, navBusy = false, fullMap = false;
 let plannerSearchTimer = null, navSearchTimer = null, rerouteTimer = null;
-let lastAutoRouteAt = 0, lastAutoRoutePos = null;
+let lastAutoRouteAt = 0, lastAutoRoutePos = null, navigationRequestId = 0;
 const NAV_STATE_KEY = 'nd_route_finder.navigation_state.v1';
 let restoringState = false;
 
@@ -294,6 +294,11 @@ function init(){
   $('navSearch').addEventListener('input',()=>debounceNavSearch());
   $('gpsSource').addEventListener('change',()=>{
     const source=$('gpsSource').value;
+    // Never keep displaying a stale marker from the previous GPS source.
+    currentPosition=null;
+    if(currentPosMarker){map.removeLayer(currentPosMarker);currentPosMarker=null;}
+    sync3DOverlays();
+    $('gpsStatus').textContent=`Waiting for ${source==='garmin'?'Fenix 8':'phone'} GPS…`;
     try{Android.setLocationSource(source);}catch(_){}
     refreshGps();
   });
@@ -343,13 +348,25 @@ function showTab(tab){
   $('navPane').classList.toggle('active',tab==='nav');
   $('planTabBtn').classList.toggle('secondary',tab!=='plan');
   $('navTabBtn').classList.toggle('secondary',tab!=='nav');
+  // The planner's default Graz start pin is not part of a loaded GPX route.
+  if(startMarker){
+    if(tab==='nav'&&map.hasLayer(startMarker))map.removeLayer(startMarker);
+    else if(tab==='plan'&&!map.hasLayer(startMarker))startMarker.addTo(map);
+  }
+  syncNavigationScreenAwake();
   setTimeout(()=>map.invalidateSize(),80);
+}
+function syncNavigationScreenAwake(){
+  // Only navigation in full-map mode holds the Android display awake.
+  try{Android.setNavigationScreenAwake(fullMap&&currentTab==='nav');}catch(_){}
 }
 function toggleFullMap(){
   fullMap=!fullMap;
+  if(fullMap&&currentTab==='nav')setFollow(true);
   document.documentElement.classList.toggle('fullMap',fullMap);
   document.body.classList.toggle('fullMap',fullMap);
-  setTimeout(()=>{map.invalidateSize();if(map3d)map3d.resize();},100);
+  syncNavigationScreenAwake();
+  setTimeout(()=>{map.invalidateSize();if(map3d)map3d.resize();if(followPosition)updateFollowCamera(true);},100);
 }
 function setFollow(value){
   followPosition=!!value;
@@ -380,27 +397,58 @@ function destinationLatLon(lat,lon,bearingDeg,distanceM){
   const lo2=lo1+Math.atan2(Math.sin(br)*Math.sin(ang)*Math.cos(la1),Math.cos(ang)-Math.sin(la1)*Math.sin(la2));
   return {lat:la2*180/Math.PI,lon:((lo2*180/Math.PI+540)%360)-180};
 }
+function routeAheadBearing(){
+  // When nearly stationary, prefer the nearby GPX direction over a noisy compass.
+  const route=navRoute?.points?.length>1?navRoute:(loadedGpx?.points?.length>1?loadedGpx:plannerRoute);
+  if(!currentPosition||!route?.points||route.points.length<2)return NaN;
+  const lat=currentPosition.lat,lon=currentPosition.lon;
+  const eastScale=111195*Math.cos(lat*Math.PI/180),northScale=111195;
+  let best=100*100,heading=NaN;
+  for(let i=1;i<route.points.length;i++){
+    const a=route.points[i-1],b=route.points[i];
+    const ax=(Number(a[1])-lon)*eastScale,ay=(Number(a[0])-lat)*northScale;
+    const dx=(Number(b[1])-Number(a[1]))*eastScale,dy=(Number(b[0])-Number(a[0]))*northScale;
+    const lengthSq=dx*dx+dy*dy;
+    if(lengthSq<0.01)continue;
+    const t=Math.max(0,Math.min(1,-(ax*dx+ay*dy)/lengthSq));
+    const d2=(ax+t*dx)**2+(ay+t*dy)**2;
+    if(d2<best){best=d2;heading=bearing(pointLatLon(a),pointLatLon(b));}
+  }
+  return heading;
+}
+function navigationHeading(){
+  if(!currentPosition)return NaN;
+  const heading=Number(currentPosition.heading),speed=Number(currentPosition.speed);
+  if(Number.isFinite(heading)&&(!Number.isFinite(speed)||speed>=0.8))return heading;
+  const routeHeading=routeAheadBearing();
+  return Number.isFinite(routeHeading)?routeHeading:heading;
+}
 function followCameraTarget(){
   if(!currentPosition)return null;
-  const speed=Number(currentPosition.speed),heading=Number(currentPosition.heading);
-  if(Number.isFinite(heading)&&Number.isFinite(speed)&&speed>0.8){
-    const aheadM=Math.max(90,Math.min(420,110+speed*28));
-    return destinationLatLon(currentPosition.lat,currentPosition.lon,heading,aheadM);
-  }
-  return {lat:currentPosition.lat,lon:currentPosition.lon};
+  const heading=navigationHeading();
+  if(!Number.isFinite(heading))return {lat:currentPosition.lat,lon:currentPosition.lon};
+  const is3D=use3D&&map3dReady;
+  const zoom=is3D?map3d.getZoom():map.getZoom();
+  const height=is3D?map3d.getCanvas().clientHeight:map.getSize().y;
+  // Fraction of the viewport is held behind the camera's center. This keeps
+  // the GPS marker visible and exposes more of the road ahead at ANY user zoom.
+  const metersPerPixel=40075016.686*Math.cos(currentPosition.lat*Math.PI/180)
+    /(Math.pow(2,zoom)*(is3D?512:256));
+  const aheadM=Math.max(0,(height||$('mapWrap').clientHeight||600)*(is3D?0.30:0.22)*metersPerPixel);
+  return destinationLatLon(currentPosition.lat,currentPosition.lon,heading,aheadM);
 }
 function updateFollowCamera(force=false){
   if(!followPosition||!currentPosition)return;
   const target=followCameraTarget();if(!target)return;
-  const heading=Number(currentPosition.heading),speed=Number(currentPosition.speed);
   if(use3D&&map3dReady){
-    const opts={center:[target.lon,target.lat],pitch:58,duration:force?280:0};
-    if(Number.isFinite(heading)&&Number.isFinite(speed)&&speed>0.8)opts.bearing=heading;
-    if(map3d.getZoom()<15.2)opts.zoom=15.2;
+    const opts={center:[target.lon,target.lat],duration:force?280:0};
+    const heading=navigationHeading();
+    if(Number.isFinite(heading))opts.bearing=heading;
+    // Never override the chosen 3D zoom or pitch while following GPS.
     map3d.easeTo(opts);
   }else{
-    const zoom=Math.max(map.getZoom(),15);
-    map.setView([target.lat,target.lon],zoom,{animate:false});
+    map.panTo([target.lat,target.lon],{animate:false});
+    // panTo preserves the user's chosen Leaflet zoom.
   }
 }
 function refreshGps(){try{if($('gpsSource').value==='garmin')Android.refreshGarmin();Android.requestCurrentPosition();}catch(_){}}
@@ -418,13 +466,18 @@ function init3DMap(){
     antialias:true,
     attributionControl:true
   });
-  map3d.on('dragstart',disableFollowFromGesture);
+  map3d.on('dragstart',e=>{
+    // Pinch-zoom with two fingers should not cancel GPS follow.
+    if(e?.originalEvent?.touches?.length>=2)return;
+    disableFollowFromGesture();
+  });
   map3d.on('click',e=>{
     if(!e||!e.lngLat)return;
     if(currentTab==='plan')applyPlannerPoint(e.lngLat.lat,e.lngLat.lng,'Map point');
     else addNavPoint(e.lngLat.lat,e.lngLat.lng,'Map point');
   });
   add3DNavigationControls();
+  map3d.addControl(new maplibregl.NavigationControl({showCompass:true,showZoom:true}),'bottom-right');
   map3d.on('load',()=>{
     map3dReady=true;
     $('mapWrap').classList.add('map3d-ready');
@@ -615,7 +668,8 @@ function toggle3D(){
       if(map3d){
         const c=map.getCenter();
         map3d.resize();
-        if(!followPosition)map3d.jumpTo({center:[c.lng,c.lat],zoom:map.getZoom(),pitch:58});
+        // Transfer any manual 2D zoom to 3D without imposing a minimum.
+        map3d.jumpTo({center:[c.lng,c.lat],zoom:map.getZoom(),pitch:map3d.getPitch()});
         sync3DOverlays();
         if(followPosition)updateFollowCamera(true);
       }
@@ -688,8 +742,19 @@ function moveNavPoint(i,d){
   [navPoints[i],navPoints[j]]=[navPoints[j],navPoints[i]];
   renderNavPoints();syncNavMarkers();persistNavigationState();scheduleAutoReroute(100);
 }
-function removeNavPoint(i){navPoints.splice(i,1);renderNavPoints();syncNavMarkers();persistNavigationState();if(navPoints.length)scheduleAutoReroute(100);else clearNavRoute();}
-function clearNavPoints(){navPoints=[];renderNavPoints();syncNavMarkers();clearNavRoute();$('navStatus').textContent='Route points cleared.';persistNavigationState();}
+function removeNavPoint(i){navPoints.splice(i,1);if(!navPoints.length){clearNavPoints();return;}renderNavPoints();syncNavMarkers();persistNavigationState();scheduleAutoReroute(100);}
+function clearNavPoints(){
+  navigationRequestId++;
+  clearTimeout(rerouteTimer);
+  navBusy=false;$('navRouteBtn').disabled=false;
+  lastAutoRoutePos=null;lastAutoRouteAt=0;
+  navPoints=[];renderNavPoints();syncNavMarkers();clearNavRoute();
+  if(loadedGpx?.points?.length){
+    try{Android.setCurrentRouteFromPoints('ND GPX',JSON.stringify(loadedGpx.points));}catch(_){}
+  }
+  $('navStatus').textContent='Added stops and temporary navigation route cleared.';
+  persistNavigationState();
+}
 
 function debouncePlannerSearch(){clearTimeout(plannerSearchTimer);const q=$('plannerSearch').value.trim();if(q.length<2){$('plannerResults').innerHTML='';return;}plannerSearchTimer=setTimeout(plannerSearchNow,650);}
 function debounceNavSearch(){clearTimeout(navSearchTimer);const q=$('navSearch').value.trim();if(q.length<2){$('navResults').innerHTML='';return;}navSearchTimer=setTimeout(navSearchNow,650);}
@@ -854,7 +919,8 @@ function generateNavigationRoute(manual=false){
   const points=navPoints.map(w=>({lat:w.lat,lon:w.lon}));
   const rejoin=computeRejoinPoint();
   if(rejoin)points.push({lat:rejoin.lat,lon:rejoin.lon,label:'Rejoin GPX'});
-  const req={originLat:currentPosition.lat,originLon:currentPosition.lon,activity:$('navActivity').value,points};
+  const requestId=++navigationRequestId;
+  const req={originLat:currentPosition.lat,originLon:currentPosition.lon,activity:$('navActivity').value,points,clientRequestId:requestId};
   navBusy=true;$('navRouteBtn').disabled=true;
   $('navStatus').innerHTML=`Calculating route through ${navPoints.length} stop${navPoints.length===1?'':'s'}${rejoin?' and back to the loaded GPX':''}…`;
   lastAutoRouteAt=Date.now();lastAutoRoutePos={lat:currentPosition.lat,lon:currentPosition.lon};
@@ -862,15 +928,23 @@ function generateNavigationRoute(manual=false){
 }
 window.ndSetNavBusy=function(v,msg){navBusy=!!v;$('navRouteBtn').disabled=navBusy;if(msg)$('navStatus').textContent=msg;};
 window.ndNavigationRouteReady=function(payload){
+  if(Number(payload?.clientRequestId)!==navigationRequestId||!navPoints.length)return;
   navBusy=false;$('navRouteBtn').disabled=false;navRoute=normalizeRoute(payload);renderNavRoute();setRouteStats('navStats',navRoute);
+  try{Android.setCurrentRouteFromPoints('ND navigation route',JSON.stringify(navRoute.points));}catch(_){}
   const rejoin=computeRejoinPoint();
   $('navStatus').innerHTML=(payload.note?esc(payload.note):`Route ready: ${routeKm(navRoute).toFixed(2)} km`)+(rejoin?`<div class="rejoinTag">After the added stop(s), this route rejoins the loaded GPX ahead.</div>`:'');
   persistNavigationState();
   if(followPosition&&currentPosition)updateFollowCamera(true);else fitEverything(false);
 };
-window.ndNavigationRouteFailed=function(msg){navBusy=false;$('navRouteBtn').disabled=false;$('navStatus').textContent='Navigation route error: '+msg;};
+window.ndNavigationRouteFailed=function(msg,requestId){
+  if(Number(requestId)!==navigationRequestId)return;
+  navBusy=false;$('navRouteBtn').disabled=false;$('navStatus').textContent='Navigation route error: '+msg;
+};
 
 window.ndLoadedGpx=function(payload){
+  // An imported GPX is a new base route, not an extension of the previous
+  // live navigation. Discard saved detours and invalidate in-flight reroutes.
+  clearNavPoints();
   if(plannerRouteLayer)map.removeLayer(plannerRouteLayer);
   if(plannerArrowLayer)map.removeLayer(plannerArrowLayer);
   plannerRouteLayer=plannerArrowLayer=null;
@@ -879,8 +953,8 @@ window.ndLoadedGpx=function(payload){
   const circular=isCircular(r.points),dir=r._reversed?'reversed':'original';
   $('gpxInfo').textContent=`Loaded GPX: ${routeKm(r).toFixed(2)} km${circular?` • circular • ${dir} direction`:' • point-to-point'}`;
   $('plannerStatus').textContent=payload.note||`Loaded GPX: ${routeKm(r).toFixed(2)} km`;
+  $('navStatus').textContent='GPX loaded on its own. Add a stop to calculate a separate route from your current GPS position.';
   persistNavigationState();setFollow(false);fitEverything(false);
-  if(navPoints.length)scheduleAutoReroute(150);
 };
 function updateReverseState(){
   const btn=$('reverseBtn'),ok=!!loadedGpx?.points?.length&&loadedGpx.points.length>1;
@@ -934,6 +1008,11 @@ function updateCurrentPositionMarker(){
 window.ndGarminStatus=function(text){$('garminStatus').textContent=text||'Garmin status unavailable.';};
 
 function collectVisiblePoints(){
+  // Fit the imported course itself. The phone may be dozens of kilometres
+  // away, and the planner's unrelated start pin must not expand the bounds.
+  if(loadedGpx?.points?.length&&!navPoints.length&&!navRoute?.points?.length){
+    return loadedGpx.points.map(pointLatLon).filter(p=>validCoord(p[0],p[1]));
+  }
   const pts=[];
   if(currentPosition)pts.push([currentPosition.lat,currentPosition.lon]);
   pts.push([start.lat,start.lon]);

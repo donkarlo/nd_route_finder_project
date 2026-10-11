@@ -72,7 +72,7 @@ public final class MainActivity extends Activity implements SensorEventListener 
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Navigation enables keep-screen-on only while its full-map view is visible.
 
         routeEngine = new RouteEngine();
         garminBridge = new GarminBridge(this, new GarminBridge.Listener() {
@@ -189,25 +189,36 @@ public final class MainActivity extends Activity implements SensorEventListener 
 
         @JavascriptInterface
         public void generateNavigationRoute(String requestJson) {
-            callJs("window.ndSetNavBusy && window.ndSetNavBusy(true,'Calculating route from current position…');");
+            // Echo this identifier so an old asynchronous routing response cannot
+            // reappear after a different GPX has been imported.
+            final long requestId;
+            try {
+                requestId = new JSONObject(requestJson).optLong("clientRequestId", -1);
+            } catch (Exception ignored) {
+                callJs("window.ndNavigationRouteFailed && window.ndNavigationRouteFailed('Invalid navigation request', -1);");
+                return;
+            }
             routeEngine.navigate(requestJson, new RouteEngine.ResultCallback() {
                 @Override
                 public void onSuccess(GpxCodec.Track track, boolean ignored, String note) {
-                    currentTrack = track;
                     try {
-                        cacheCurrentRoute(track);
                         JSONObject payload = track.toJson(true);
                         payload.put("fallback", false);
                         payload.put("note", note);
+                        payload.put("clientRequestId", requestId);
+                        // The JavaScript receiver decides whether this response is current.
+                        // Only accepted routes are then copied into the Garmin export cache.
                         callJs("window.ndNavigationRouteReady && window.ndNavigationRouteReady(" + payload.toString() + ");");
                     } catch (Exception e) {
-                        callJs("window.ndNavigationRouteFailed && window.ndNavigationRouteFailed(" + JSONObject.quote(message(e)) + ");");
+                        callJs("window.ndNavigationRouteFailed && window.ndNavigationRouteFailed("
+                                + JSONObject.quote(message(e)) + "," + requestId + ");");
                     }
                 }
 
                 @Override
                 public void onFailure(String message) {
-                    callJs("window.ndNavigationRouteFailed && window.ndNavigationRouteFailed(" + JSONObject.quote(message) + ");");
+                    callJs("window.ndNavigationRouteFailed && window.ndNavigationRouteFailed("
+                            + JSONObject.quote(message) + "," + requestId + ");");
                 }
             });
         }
@@ -236,6 +247,17 @@ public final class MainActivity extends Activity implements SensorEventListener 
         @JavascriptInterface
         public void requestCurrentPosition() {
             publishSelectedLocation();
+        }
+
+        @JavascriptInterface
+        public void setNavigationScreenAwake(boolean awake) {
+            runOnUiThread(() -> {
+                if (awake) {
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } else {
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                }
+            });
         }
 
         @JavascriptInterface

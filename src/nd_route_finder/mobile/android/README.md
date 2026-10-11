@@ -23,6 +23,17 @@ Android UI mirrors the current Route Finder workflow:
 - send a point to the currently active Garmin activity
 - send the current GPX to Garmin Connect for course import / Send to Device
 
+### Full-map live navigation (2D and 3D)
+
+- Open **Navigate GPX → Full map** to enter the live-navigation view. The Android display stays awake **while this foreground view is open** (even while waiting for a Garmin or phone GPS fix). Leaving Full map releases the keep-screen-on flag; Android's power button or lock screen still works normally.
+- Choose **Garmin Fenix 8 GPS** (requires live Connect IQ telemetry from the activity) or **Mobile phone GPS**. Switching sources clears the old position marker until the new source reports a position.
+- The follow camera is enabled on entering the full map. Both 2D and 3D show a red location arrow and shift the camera ahead along the live travel heading. When nearly stopped near the route, the direction of the nearby GPX segment can guide the view.
+- Manual pinch or +/- zoom is preserved across GPS updates; look-ahead distance scales with zoom so the rider stays visible rather than being pushed off-screen. 3D also preserves pitch. A deliberate one-finger drag pauses Follow; tap **⌖** to resume.
+- 3D provides zoom (+/-) and compass controls at the bottom-right. Zoom transfers between 2D and 3D instead of resetting to a minimum value.
+- Importing a GPX resets earlier temporary routes and added stops. The map fits the imported GPX, not the distant phone position or default planner start in Graz. The planner start pin is hidden on the navigation tab.
+- Outdated asynchronous rerouting results are ignored after a new import. A temporary route from GPS is calculated when a destination stop is added, and clearing the stops restores the base GPX.
+- Run navigation tests with `node --test tests/navigation_follow.test.cjs` before building.
+
 ### Mobile route engine
 
 The Android version uses the public BRouter service for the first mobile implementation.
