@@ -29,6 +29,17 @@ class MultiWaypointRoundTripGenerator(RoundTripGenerator):
         previous_tracks: list[Track] | None = None,
     ) -> list[RouteCandidate]:
         waypoints = tuple(getattr(request, "waypoints", ()))
+        route_mode = getattr(request, "route_mode", "circular")
+        if route_mode not in ("circular", "direct"):
+            raise ValueError(f"Unknown route mode: {route_mode}")
+        if route_mode == "direct" and not waypoints:
+            raise ValueError("Direct route requires at least one destination (intermediate point).")
+        preference = getattr(request, "route_preference", "auto")
+        if preference not in ("auto", "shortest", "distance"):
+            raise ValueError(f"Unknown route preference: {preference}")
+        shortest = preference == "shortest" or (
+            preference == "auto" and not previous_tracks and bool(waypoints)
+        )
         if not waypoints:
             # Preserve the current one-start-point logic byte-for-byte on the normal
             # successful path. Only extend behavior where it used to fail outright.
@@ -67,10 +78,13 @@ class MultiWaypointRoundTripGenerator(RoundTripGenerator):
             start,
             mandatory_nodes,
             mandatory_nodes,
+            return_to_start=(route_mode == "circular"),
+            weight="length" if shortest else "route_cost",
         )
         if base_route is None:
             raise RuntimeError(
-                "The selected intermediate points cannot all be connected in the requested order."
+                "No legal cycling/walking path connects the start and selected points "
+                "in order. Check the snapped locations or access restrictions."
             )
         self._append_route_candidate(
             graph,
@@ -79,6 +93,11 @@ class MultiWaypointRoundTripGenerator(RoundTripGenerator):
             generated,
             seen_routes,
         )
+
+        # Direct routes never return to the start. Shortest routes do not invent
+        # extra stops, regardless of the old target-distance field.
+        if route_mode == "direct" or shortest:
+            return generated
 
         # Candidate detours are inserted around the ordered mandatory points. The
         # user-selected waypoint order is never changed; only optional detour nodes
@@ -170,46 +189,43 @@ class MultiWaypointRoundTripGenerator(RoundTripGenerator):
         start: int,
         ordered_nodes: list[int],
         mandatory_nodes: list[int],
+        *,
+        return_to_start: bool = True,
+        weight: str = "route_cost",
     ) -> list[int] | None:
-        """Route through ordered nodes without visiting future mandatory points early."""
-        route = [start]
-        current = start
-        remaining_mandatory = list(mandatory_nodes)
-
-        try:
-            for target in ordered_nodes:
-                if target == current:
-                    if remaining_mandatory and target == remaining_mandatory[0]:
-                        remaining_mandatory.pop(0)
-                    continue
-
-                if remaining_mandatory and target == remaining_mandatory[0]:
-                    forbidden = set(remaining_mandatory[1:])
-                else:
-                    forbidden = set(remaining_mandatory)
-
-                # Prevent a shortest leg from physically crossing a later mandatory
-                # waypoint before its user-defined turn. The target itself is always
-                # kept available.
-                forbidden.discard(target)
-                view = nx.subgraph_view(
-                    graph,
-                    filter_node=lambda node, blocked=forbidden: node not in blocked,
-                )
-                leg = nx.shortest_path(view, current, target, weight="route_cost")
-                route.extend(int(node) for node in leg[1:])
-                current = target
-
-                if remaining_mandatory and target == remaining_mandatory[0]:
-                    remaining_mandatory.pop(0)
-
-            if current != start:
-                leg = nx.shortest_path(graph, current, start, weight="route_cost")
-                route.extend(int(node) for node in leg[1:])
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            return None
-
-        return route if len(route) >= 3 else None
+        """Preserve stop order and road direction; retry without over-restricting nodes."""
+        for strict in (True, False):
+            route = [start]
+            current = start
+            remaining = list(mandatory_nodes)
+            try:
+                for target in ordered_nodes:
+                    if target == current:
+                        if remaining and target == remaining[0]:
+                            remaining.pop(0)
+                        continue
+                    if strict:
+                        forbidden = (set(remaining[1:]) if remaining and target == remaining[0]
+                                     else set(remaining))
+                        forbidden.discard(target)
+                        view = nx.subgraph_view(
+                            graph, filter_node=lambda n, f=forbidden: n not in f
+                        )
+                    else:
+                        view = graph
+                    leg = nx.shortest_path(view, current, target, weight=weight)
+                    route.extend(int(node) for node in leg[1:])
+                    current = target
+                    if remaining and target == remaining[0]:
+                        remaining.pop(0)
+                if return_to_start and current != start:
+                    leg = nx.shortest_path(graph, current, start, weight=weight)
+                    route.extend(int(node) for node in leg[1:])
+                if len(route) >= 2:
+                    return route
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+        return None
 
     def _single_point_fallback_candidates(
         self,

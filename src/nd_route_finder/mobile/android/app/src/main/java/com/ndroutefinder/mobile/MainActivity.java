@@ -74,7 +74,7 @@ public final class MainActivity extends Activity implements SensorEventListener 
 
         // Navigation enables keep-screen-on only while its full-map view is visible.
 
-        routeEngine = new RouteEngine();
+        routeEngine = new RouteEngine(this);
         garminBridge = new GarminBridge(this, new GarminBridge.Listener() {
             @Override
             public void onStatus(String text) {

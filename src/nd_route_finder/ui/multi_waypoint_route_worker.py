@@ -4,6 +4,7 @@ from nd_route_finder.application.multi_waypoint_route_finder_application import 
     MultiWaypointRouteFinderApplication,
 )
 from nd_route_finder.domain.route_request import RouteRequest
+from nd_route_finder.geodata.overpass_unavailable_error import OverpassUnavailableError
 
 
 class MultiWaypointRouteWorker(QThread):
@@ -22,5 +23,7 @@ class MultiWaypointRouteWorker(QThread):
                 status=self.status_changed.emit,
             )
             self.succeeded.emit(result)
+        except OverpassUnavailableError as exc:
+            self.failed.emit(str(exc))
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")

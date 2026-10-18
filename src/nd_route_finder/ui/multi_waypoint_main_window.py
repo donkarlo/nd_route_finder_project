@@ -33,9 +33,30 @@ class MultiWaypointMainWindow(MainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        history_root = Path.home() / (
+            "Dropbox/repo/nd_robotic_ai_project/data/kind/environment/map/done"
+        )
+        if history_root.is_dir():
+            self._gpx_root.setText(str(history_root))
+        else:
+            self._gpx_root.setText("")
+        self._gpx_root.setPlaceholderText("Optional — previous GPX history folder")
 
         self._map_builder = MultiWaypointMapHtmlBuilder()
 
+        self._route_mode = QComboBox()
+        self._route_mode.addItem("Circular — return to start", "circular")
+        self._route_mode.addItem("Direct — finish at last point", "direct")
+        self._route_preference = QComboBox()
+        self._route_preference.addItem("Auto — shortest without history", "auto")
+        self._route_preference.addItem("Shortest legal path", "shortest")
+        self._route_preference.addItem("Match target distance", "distance")
+        self._route_hint = QLabel(
+            "Direct requires a destination in Intermediate points. With Auto and "
+            "no previous GPX tracks, the shortest path through the stops is used. "
+            "Shortest ignores the target distance."
+        )
+        self._route_hint.setWordWrap(True)
         self._map_action = QComboBox()
         self._map_action.addItem("Set start point", "start")
         self._map_action.addItem("Add intermediate point", "waypoint")
@@ -68,6 +89,9 @@ class MultiWaypointMainWindow(MainWindow):
         form = self._controls.layout()
         if not isinstance(form, QFormLayout):
             raise RuntimeError("Unexpected controls layout; expected QFormLayout.")
+        form.insertRow(1, "Route shape", self._route_mode)
+        form.insertRow(2, "Route objective", self._route_preference)
+        form.insertRow(3, self._route_hint)
         form.addRow("Map / search action", self._map_action)
         form.addRow("Intermediate points", waypoint_widget)
 
@@ -82,6 +106,8 @@ class MultiWaypointMainWindow(MainWindow):
         self._web_channel.registerObject("bridge", self._map_bridge)
         self._web.page().setWebChannel(self._web_channel)
 
+        self._route_mode.currentIndexChanged.connect(self._route_options_changed)
+        self._route_preference.currentIndexChanged.connect(self._route_options_changed)
         self._map_action.currentIndexChanged.connect(self._selection_mode_changed)
         self._web.loadFinished.connect(self._map_loaded)
         self._remove_waypoint.clicked.connect(self._remove_selected_waypoint)
@@ -90,6 +116,14 @@ class MultiWaypointMainWindow(MainWindow):
 
         self._show_selector_map()
         self._selection_mode_changed()
+
+    def _route_options_changed(self, *_: object) -> None:
+        direct = self._route_mode.currentData() == "direct"
+        self._distance.setEnabled(not direct and self._route_preference.currentData() != "shortest")
+        self._status.setText(
+            "Direct: last point is the destination; no return to start."
+            if direct else "Circular: route returns to start."
+        )
 
     def _show_selector_map(self) -> None:
         self._prepare_map_builder()
@@ -194,7 +228,13 @@ class MultiWaypointMainWindow(MainWindow):
         )
 
     def _start_generation(self) -> None:
-        gpx_root = Path(self._gpx_root.text()).expanduser().resolve()
+        gpx_text = self._gpx_root.text().strip()
+        if gpx_text:
+            gpx_root = Path(gpx_text).expanduser().resolve()
+        else:
+            # Empty history must not implicitly search the working directory.
+            gpx_root = Path.home() / ".cache" / "nd_route_finder" / "empty_history"
+            gpx_root.mkdir(parents=True, exist_ok=True)
         output = Path(self._output_path.text()).expanduser().resolve()
         if output.suffix.lower() != ".gpx":
             output = output.with_suffix(".gpx")
@@ -206,6 +246,16 @@ class MultiWaypointMainWindow(MainWindow):
 
         if not gpx_root.is_dir():
             QMessageBox.warning(self, "Invalid input", "Choose an existing GPX root folder.")
+            return
+        if self._route_mode.currentData() == "direct" and not self._waypoints():
+            QMessageBox.warning(self, "Destination required",
+                                "Add a destination using search or map before generating a direct route.")
+            return
+        if (self._route_mode.currentData() == "circular"
+                and self._route_preference.currentData() == "shortest"
+                and not self._waypoints()):
+            QMessageBox.warning(self, "Intermediate point required",
+                                "Add a waypoint to define a meaningful shortest circular route, or choose Auto/Target distance.")
             return
         if dem is not None and not dem.is_file():
             QMessageBox.warning(self, "Invalid input", "The selected DEM file does not exist.")
@@ -222,6 +272,8 @@ class MultiWaypointMainWindow(MainWindow):
             output_gpx=output,
             dem_path=dem,
             waypoints=self._waypoints(),
+            route_mode=str(self._route_mode.currentData()),
+            route_preference=str(self._route_preference.currentData()),
         )
 
         self._elevation_profile.clear()
@@ -238,7 +290,9 @@ class MultiWaypointMainWindow(MainWindow):
             if request.waypoints
             else ""
         )
-        self._status.setText(f"Starting circular route{point_text} … Output: {output}")
+        self._status.setText(
+            f"Starting {request.route_mode} route{point_text} … Output: {output}"
+        )
         self._worker = MultiWaypointRouteWorker(request)
         self._worker.status_changed.connect(self._status.setText)
         self._worker.succeeded.connect(self._generation_succeeded)
@@ -256,7 +310,13 @@ class MultiWaypointMainWindow(MainWindow):
         super()._generation_succeeded(result)
         if isinstance(result, tuple) and len(result) == 4:
             generated = result[1]
-            if (
+            if isinstance(generated, Track) and generated.metadata.get("routing_backend") == "BRouter":
+                self._status.setText(
+                    f"Done — backup GPX from BRouter: {generated.distance_m / 1000.0:.2f} km, "
+                    f"estimated max slope {generated.max_grade_percent:.1f}%. "
+                    "Overpass was unavailable; independent barrier checks could not be completed."
+                )
+            elif (
                 isinstance(generated, Track)
                 and generated.metadata.get("constraint_fallback") == "true"
                 and generated.max_grade_percent is not None

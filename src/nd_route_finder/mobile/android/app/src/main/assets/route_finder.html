@@ -21,7 +21,8 @@ input,select,button{font:inherit}input,select{width:100%;min-height:40px;border:
 .garminStatus{background:#f2f8f5;border:1px solid #cfe8da}.profileGrid{display:grid;gap:10px}.profileCard{border:1px solid var(--line);border-radius:9px;padding:7px;background:#fbfcfe}.profileTitle{font-size:12px;font-weight:700;margin-bottom:4px}.profileSvg{display:block;width:100%;height:95px;background:#fff;border-radius:6px}.profileMeta{font-size:10px;color:var(--muted);margin-top:3px}
 .tabPane{display:none}.tabPane.active{display:block}.fullMap .panel{display:none}.fullMap .app{grid-template-columns:1fr}.fullMap .mapWrap{height:100vh}.mapAction{position:absolute;left:50%;transform:translateX(-50%);bottom:18px;z-index:2147483001;background:rgba(255,255,255,.94);border:1px solid #d5dce5;border-radius:99px;padding:8px 14px;color:#24344e;box-shadow:var(--shadow);font-size:12px;font-weight:700;display:none}.fullMap .mapAction{display:block}.map3d{position:absolute;inset:0;display:none;background:#dfe7ef;z-index:20}.mapWrap.threeD #map{display:none}.mapWrap.threeD #map3d{display:block}.mapTools{position:absolute;left:12px;bottom:38px;z-index:2147483002;display:flex!important;gap:8px;pointer-events:auto}.mapTool{width:48px;height:48px;min-height:48px;border-radius:50%;padding:0;background:rgba(255,255,255,.98);color:#1f3551;border:1px solid #ccd6e2;box-shadow:var(--shadow);font-size:18px;pointer-events:auto}.mapTool.active{background:#2b6db2;color:#fff;border-color:#2b6db2}.mapTool.smallText{font-size:13px}.trackingHint{position:absolute;left:12px;bottom:94px;z-index:2147483001;background:rgba(255,255,255,.92);border-radius:99px;padding:5px 9px;font-size:10px;color:#41536b;box-shadow:var(--shadow);pointer-events:none}.mapWrap.threeD.map3d-ready .mapTools{display:none!important}.mapWrap.threeD.map3d-ready .trackingHint{display:none}.nd-3d-ctrl button{font:700 16px system-ui,-apple-system,Segoe UI,Roboto,sans-serif!important;width:42px!important;height:42px!important;line-height:42px!important;padding:0!important;color:#1f3551!important;background:#fff!important}.nd-3d-ctrl button.active{background:#2b6db2!important;color:#fff!important}.nd-3d-ctrl .nd-2d-btn{font-size:12px!important;font-weight:800!important}
 .dir-arrow{background:transparent;border:0}.dir-arrow span{display:block;color:#082f63;font-size:24px;font-weight:900;line-height:22px;text-shadow:-2px -2px 0 #fff,2px -2px 0 #fff,-2px 2px 0 #fff,2px 2px 0 #fff;transform-origin:center}
-.gps-arrow{background:transparent;border:0}.gps-arrow span{display:block;color:#dc2626;font-size:27px;font-weight:900;line-height:25px;text-shadow:-2px -2px 0 #fff,2px -2px 0 #fff,-2px 2px 0 #fff,2px 2px 0 #fff;transform-origin:center}
+.gps-arrow{background:transparent;border:0}.gps-arrow svg{display:block;width:28px;height:38px;filter:drop-shadow(0 0 2px #fff);transform-origin:50% 50%}
+.gps-unknown{border:3px solid white;background:#dc2626;border-radius:50%;box-shadow:0 0 3px #333}
 .rejoinTag{font-size:11px;color:#6d28d9;font-weight:700}
 @media(max-width:800px){body{overflow:auto}.app{height:auto;min-height:100%;display:block}.panel{border-right:0;border-bottom:1px solid var(--line);max-height:none;padding-bottom:16px}.mapWrap{height:62vh;min-height:430px}.map{height:100%}.legend{top:8px;right:8px;max-width:180px}.section{padding:10px}.row{gap:6px}.fullMap .mapWrap{height:100vh;min-height:100vh}.fullMap body{overflow:hidden}}
 </style>
@@ -45,6 +46,9 @@ input,select,button{font:inherit}input,select{width:100%;min-height:40px;border:
 
       <div class="section">
         <div class="sectionTitle">Route settings</div>
+        <div class="field"><label>Route shape</label><select id="routeMode"><option value="circular">Circular — back to start</option><option value="direct">Direct — end at last point</option></select></div>
+        <div class="field"><label>Route priority</label><select id="routePreference"><option value="auto">Auto — shortest without previous tracks</option><option value="shortest">Shortest available path</option><option value="distance">Match target distance</option></select></div>
+        <div class="hint">For Direct, add a destination. Shortest ignores target distance. Match target distance compares routes against a bundled snapshot of 38 previously travelled GPX tracks (refreshed when the Android app is rebuilt).</div>
         <div class="field"><label>Activity</label><select id="activity"><option value="cycling">Cycling</option><option value="hiking">Hiking</option><option value="walking">Walking — paths allowed</option></select></div>
         <div class="row">
           <div class="field"><label>Start latitude</label><input id="lat" type="number" step="0.0000001" value="47.0707000"/></div>
@@ -111,6 +115,8 @@ input,select,button{font:inherit}input,select{width:100%;min-height:40px;border:
           <div class="field"><label>GPS source</label><select id="gpsSource"><option value="garmin" selected>Garmin Fenix 8 GPS</option><option value="phone">Mobile phone GPS</option></select></div>
           <div class="field"><label>Routing</label><select id="navActivity"><option value="cycling">Cycling</option><option value="walking">Walking</option></select></div>
         </div>
+        <div class="field"><label>Garmin heading calibration (degrees)</label><input id="headingOffset" type="number" min="-180" max="180" step="1" value="0"/></div>
+        <div class="hint">Rotate the direction arrow to compensate for wrist/handlebar orientation. Positive = clockwise; negative = counterclockwise. Phone GPS retains the last movement direction.</div>
         <div class="buttonGrid"><button id="followPanelBtn" class="secondary" onclick="toggleFollow()">Follow GPS: on</button><button class="secondary" onclick="refreshGps()">Refresh GPS</button></div>
         <div id="gpsStatus" class="status">Waiting for phone position…</div>
         <div class="hint">Fenix GPS requires an active activity containing the updated “ND Route Target” data field.</div>
@@ -178,6 +184,50 @@ let plannerSearchTimer = null, navSearchTimer = null, rerouteTimer = null;
 let lastAutoRouteAt = 0, lastAutoRoutePos = null, navigationRequestId = 0;
 const NAV_STATE_KEY = 'nd_route_finder.navigation_state.v1';
 let restoringState = false;
+let lastPhoneTravelHeading = NaN, lastPhoneFix = null, lastGarminHeading = NaN;
+const HEADING_OFFSET_KEY = 'nd_route_finder.heading_offset.v1';
+function normalizeHeading(degrees){return ((degrees%360)+360)%360;}
+function gpsHeadingFor(position){
+  if(position.source==='garmin'){
+    if(Number.isFinite(position.rawHeading))lastGarminHeading=position.rawHeading;
+    return Number.isFinite(lastGarminHeading)
+      ? normalizeHeading(lastGarminHeading+num($('headingOffset')?.value,0)):NaN;
+  }
+  // Derive the phone course from its actual movement; hold the latest course
+  // while still, regardless of which way the handset is facing.
+  if(lastPhoneFix){
+    const travelled=hav([lastPhoneFix.lat,lastPhoneFix.lon],[position.lat,position.lon]);
+    if(travelled>=4&&travelled<250&&(!Number.isFinite(position.accuracy)||position.accuracy<=35)){
+      lastPhoneTravelHeading=bearing([lastPhoneFix.lat,lastPhoneFix.lon],[position.lat,position.lon]);
+      lastPhoneFix={lat:position.lat,lon:position.lon};
+    }
+  }else lastPhoneFix={lat:position.lat,lon:position.lon};
+  // A phone bearing fallback can be magnetic heading, not course over ground.
+  // Only trust it until the first sufficiently displaced GPS fix provides travel direction.
+  if(!Number.isFinite(lastPhoneTravelHeading)&&Number.isFinite(position.rawHeading)
+      &&Number.isFinite(position.speed)&&position.speed>=0.8)
+    lastPhoneTravelHeading=normalizeHeading(position.rawHeading);
+  return lastPhoneTravelHeading;
+}
+function updateHeadingCalibration(){
+  const field=$('headingOffset');if(!field)return;
+  if(!field.value.trim()||!Number.isFinite(Number(field.value)))return;
+  const offset=Math.max(-180,Math.min(180,Math.round(Number(field.value))));
+  if(document.activeElement!==field)field.value=String(offset);
+  try{localStorage.setItem(HEADING_OFFSET_KEY,String(offset));}catch(_){}
+  if(currentPosition?.source==='garmin'){
+    currentPosition.heading=gpsHeadingFor(currentPosition);
+    updateCurrentPositionMarker();sync3DOverlays();updateFollowCamera(false);
+  }
+}
+function syncRouteOptions(){
+  const direct=$('routeMode').value==='direct';
+  const shortest=$('routePreference').value==='shortest';
+  // Bundled GPX history exists in the APK, so Auto compares routes to the
+  // distance and earlier rides. Shortest is always available explicitly.
+  $('distance').disabled=direct||shortest;
+  persistNavigationState();
+}
 
 function persistNavigationState(){
   if(restoringState)return;
@@ -194,7 +244,9 @@ function persistNavigationState(){
       navActivity:$('navActivity')?.value||'cycling',
       plannerActivity:$('activity')?.value||'cycling',
       distance:$('distance')?.value||'20',
-      grade:$('grade')?.value||'12'
+      grade:$('grade')?.value||'12',
+      routeMode:$('routeMode')?.value||'circular',
+      routePreference:$('routePreference')?.value||'auto'
     };
     localStorage.setItem(NAV_STATE_KEY,JSON.stringify(state));
   }catch(e){
@@ -223,6 +275,8 @@ function restoreNavigationState(){
     if(s.plannerActivity&&$('activity'))$('activity').value=s.plannerActivity;
     if(s.distance!=null&&$('distance'))$('distance').value=s.distance;
     if(s.grade!=null&&$('grade'))$('grade').value=s.grade;
+    if(s.routeMode&&$('routeMode'))$('routeMode').value=s.routeMode;
+    if(s.routePreference&&$('routePreference'))$('routePreference').value=s.routePreference;
 
     renderPlannerWaypoints();syncPlannerWaypointMarkers();
     renderNavPoints();syncNavMarkers();
@@ -242,7 +296,7 @@ function restoreNavigationState(){
     }else if(loadedGpx?.points?.length){
       $('navStatus').textContent='Restored the saved GPX. Waiting for GPS.';
     }
-    updateReverseState();
+    updateReverseState();syncRouteOptions();
     const nativeRoute=navRoute?.points?.length?navRoute:(loadedGpx?.points?.length?loadedGpx:plannerRoute);
     if(nativeRoute?.points?.length){
       try{Android.setCurrentRouteFromPoints('ND restored route',JSON.stringify(nativeRoute.points));}catch(_){}
@@ -292,10 +346,17 @@ function init(){
   $('plannerSearch').addEventListener('input',()=>debouncePlannerSearch());
   $('navSearch').addEventListener('keydown',e=>{if(e.key==='Enter')navSearchNow();});
   $('navSearch').addEventListener('input',()=>debounceNavSearch());
+  $('headingOffset').addEventListener('change',updateHeadingCalibration);
+  $('headingOffset').addEventListener('input',updateHeadingCalibration);
+  try{$('headingOffset').value=localStorage.getItem(HEADING_OFFSET_KEY)||'0';}catch(_){}
+  $('routeMode').addEventListener('change',syncRouteOptions);
+  $('routePreference').addEventListener('change',syncRouteOptions);
   $('gpsSource').addEventListener('change',()=>{
     const source=$('gpsSource').value;
     // Never keep displaying a stale marker from the previous GPS source.
     currentPosition=null;
+    lastPhoneTravelHeading=NaN;lastPhoneFix=null;lastGarminHeading=NaN;
+    $('headingOffset').disabled=source!=='garmin';
     if(currentPosMarker){map.removeLayer(currentPosMarker);currentPosMarker=null;}
     sync3DOverlays();
     $('gpsStatus').textContent=`Waiting for ${source==='garmin'?'Fenix 8':'phone'} GPS…`;
@@ -308,12 +369,14 @@ function init(){
   $('grade').addEventListener('change',persistNavigationState);
   const restored=restoreNavigationState();
   if(!restored){renderPlannerWaypoints();renderNavPoints();}
+  syncRouteOptions();
   updateReverseState();
   updateFollowUi();
   showTab('nav');
   if(restored)fitEverything(false);
   try{
     $('gpsSource').value='garmin';
+    $('headingOffset').disabled=false;
     Android.setLocationSource('garmin');
     Android.requestCurrentPosition();
   }catch(_){}
@@ -545,8 +608,26 @@ function add3DBuildings(){
     },label?label.id:undefined);
   }catch(_){}
 }
+// The 3D map uses a gently raised, shaded isosceles direction prism.
+// Its long vertex is still exactly aligned with Garmin (plus calibration)
+// or the last reliable phone GPS course; the 2D arrow remains flat.
+function gpsArrow3DSvg(){
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">'
+    + '<path d="M18 3 L31 42 L29 46 L18 41 L7 46 L5 42 Z" fill="#881a20" stroke="#ffffff" stroke-width="2.4" stroke-linejoin="round"/>'
+    + '<path d="M18 3 L31 42 L18 38 L5 42 Z" fill="#dc2626"/>'
+    + '<path d="M18 3 L18 38 L5 42 Z" fill="#fb5b58"/>'
+    + '<path d="M18 3 L31 42 L18 38 Z" fill="#bd1a23"/>'
+    + '<path d="M18 3 L18 38" fill="none" stroke="#ffd1d0" stroke-width="0.8"/>'
+    + '</svg>';
+}
 function ensure3DOverlayLayers(){
   if(!map3dReady)return;
+  if(typeof Image!=='undefined'&&!map3d.hasImage('nd-long-gps-arrow')){
+    const img=new Image(36,48);
+    img.onload=()=>{try{if(map3d&&!map3d.hasImage('nd-long-gps-arrow'))
+      map3d.addImage('nd-long-gps-arrow',img,{pixelRatio:1});}catch(e){console.warn(e);}};
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(gpsArrow3DSvg());
+  }
   if(!map3d.getSource('nd-routes')){
     map3d.addSource('nd-routes',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
     map3d.addLayer({id:'nd-route-lines',type:'line',source:'nd-routes',paint:{'line-color':['get','color'],'line-width':['get','width'],'line-opacity':['get','opacity']}});
@@ -573,7 +654,7 @@ function ensure3DOverlayLayers(){
   }
   if(!map3d.getSource('nd-points')){
     map3d.addSource('nd-points',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-    map3d.addLayer({id:'nd-point-circles',type:'circle',source:'nd-points',paint:{'circle-radius':7,'circle-color':'#7c3aed','circle-stroke-color':'#ffffff','circle-stroke-width':3}});
+    map3d.addLayer({id:'nd-point-circles',type:'circle',source:'nd-points',paint:{'circle-radius':['case',['==',['get','kind'],'gps'],8,7],'circle-color':['case',['==',['get','kind'],'gps'],'#dc2626','#7c3aed'],'circle-stroke-color':'#ffffff','circle-stroke-width':3}});
   }
   if(!map3d.getSource('nd-gps-heading')){
     map3d.addSource('nd-gps-heading',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
@@ -581,14 +662,12 @@ function ensure3DOverlayLayers(){
       id:'nd-gps-heading-arrow',type:'symbol',source:'nd-gps-heading',
       layout:{
         'symbol-placement':'point',
-        'text-field':'▲',
-        'text-size':28,
-        'text-rotate':['get','bearing'],
-        'text-rotation-alignment':'map',
-        'text-allow-overlap':true,
-        'text-ignore-placement':true
-      },
-      paint:{'text-color':'#dc2626','text-halo-color':'#ffffff','text-halo-width':3}
+        'icon-image':'nd-long-gps-arrow',
+        'icon-rotate':['get','bearing'],
+        'icon-rotation-alignment':'map',
+        'icon-allow-overlap':true,
+        'icon-ignore-placement':true
+      }
     });
   }
 }
@@ -644,14 +723,18 @@ function sync3DOverlays(){
 
   const pts=[];
   navPoints.forEach(w=>pts.push({type:'Feature',properties:{kind:'stop'},geometry:{type:'Point',coordinates:[w.lon,w.lat]}}));
+  // When neither watch nor phone has supplied a trustworthy heading,
+  // keep the GPS position visible in 3D as a red dot, not a false arrow.
+  if(currentPosition&&!Number.isFinite(currentPosition.heading))
+    pts.push({type:'Feature',properties:{kind:'gps'},geometry:{type:'Point',coordinates:[currentPosition.lon,currentPosition.lat]}});
   const ps=map3d.getSource('nd-points');if(ps)ps.setData({type:'FeatureCollection',features:pts});
 
   const gpsHeading=[];
-  if(currentPosition){
-    const h=Number(currentPosition.heading);
+  if(currentPosition&&Number.isFinite(currentPosition.heading)){
+    const h=currentPosition.heading;
     gpsHeading.push({
       type:'Feature',
-      properties:{bearing:Number.isFinite(h)?h:0},
+      properties:{bearing:h},
       geometry:{type:'Point',coordinates:[currentPosition.lon,currentPosition.lat]}
     });
   }
@@ -700,6 +783,7 @@ function applyPlannerPoint(lat,lon,label){
   }else setStart(lat,lon,label);
 }
 function renderPlannerWaypoints(){
+  if($('distance'))syncRouteOptions();
   const root=$('plannerWaypoints');root.innerHTML='';
   plannerWaypoints.forEach((w,i)=>{
     const e=document.createElement('div');e.className='wp';
@@ -800,7 +884,13 @@ function focusMap(lat,lon,zoom=16){
 
 function generatePlannerRoute(){
   if(plannerBusy)return;
-  const req={startLat:start.lat,startLon:start.lon,activity:$('activity').value,distanceKm:num($('distance').value,20),maxGrade:num($('grade').value,12),waypoints:plannerWaypoints.map(w=>({lat:w.lat,lon:w.lon}))};
+  if($('routeMode').value==='direct'&&!plannerWaypoints.length){
+    $('plannerStatus').textContent='Add a destination (intermediate point) for a Direct route.';return;
+  }
+  if($('routeMode').value==='circular'&&$('routePreference').value==='shortest'&&!plannerWaypoints.length){
+    $('plannerStatus').textContent='Add an intermediate point for a shortest circular route, or choose Auto/Match distance.';return;
+  }
+  const req={startLat:start.lat,startLon:start.lon,activity:$('activity').value,distanceKm:num($('distance').value,20),maxGrade:num($('grade').value,12),routeMode:$('routeMode').value,routePreference:$('routePreference').value,waypoints:plannerWaypoints.map(w=>({lat:w.lat,lon:w.lon}))};
   plannerBusy=true;$('generateBtn').disabled=true;$('plannerStatus').textContent='Calculating route…';
   try{Android.generateRoute(JSON.stringify(req));}catch(e){plannerBusy=false;$('generateBtn').disabled=false;$('plannerStatus').textContent='Route error: '+e;}
 }
@@ -985,7 +1075,13 @@ function reverseRoute(){
 
 window.ndPositionUpdate=function(p){
   if(!p||!validCoord(Number(p.lat),Number(p.lon)))return;
-  currentPosition={lat:Number(p.lat),lon:Number(p.lon),heading:Number(p.heading),accuracy:Number(p.accuracy),speed:Number(p.speed),time:Number(p.time),source:p.source||$('gpsSource').value};
+  const source=p.source||$('gpsSource').value;
+  if(source!==$('gpsSource').value)return;
+  const fix={lat:Number(p.lat),lon:Number(p.lon),rawHeading:p.heading==null?NaN:Number(p.heading),
+    heading:NaN,accuracy:p.accuracy==null?NaN:Number(p.accuracy),
+    speed:p.speed==null?NaN:Number(p.speed),time:Number(p.time),source};
+  fix.heading=gpsHeadingFor(fix);
+  currentPosition=fix;
   updateCurrentPositionMarker();
   const acc=Number.isFinite(currentPosition.accuracy)?` • ±${Math.round(currentPosition.accuracy)} m`:'';
   const spd=Number.isFinite(currentPosition.speed)?` • ${(currentPosition.speed*3.6).toFixed(1)} km/h`:'';
@@ -1001,8 +1097,13 @@ window.ndPositionWaiting=function(source){$('gpsStatus').textContent=source==='g
 function updateCurrentPositionMarker(){
   if(!currentPosition)return;
   if(currentPosMarker)map.removeLayer(currentPosMarker);
-  const h=Number.isFinite(currentPosition.heading)?currentPosition.heading:0;
-  const icon=L.divIcon({className:'gps-arrow',html:`<span style="transform:rotate(${h}deg)">▲</span>`,iconSize:[28,28],iconAnchor:[14,14]});
+  const h=currentPosition.heading;
+  const oriented=Number.isFinite(h);
+  const arrow=oriented
+    ? `<svg style="transform:rotate(${h}deg)" viewBox="0 0 36 48" xmlns="http://www.w3.org/2000/svg"><polygon points="18,2 29,45 7,45" fill="#dc2626" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`
+    : '<span class="gps-unknown" style="display:block;width:17px;height:17px"></span>';
+  const icon=L.divIcon({className:'gps-arrow',html:arrow,
+    iconSize:oriented?[28,38]:[17,17],iconAnchor:oriented?[14,19]:[8,8]});
   currentPosMarker=L.marker([currentPosition.lat,currentPosition.lon],{icon,zIndexOffset:900}).addTo(map).bindTooltip(currentPosition.source==='garmin'?'Fenix 8':'Phone GPS');
 }
 window.ndGarminStatus=function(text){$('garminStatus').textContent=text||'Garmin status unavailable.';};

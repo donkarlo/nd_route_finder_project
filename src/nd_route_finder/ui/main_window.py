@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -160,7 +161,11 @@ class MainWindow(QMainWindow):
         route_actions_layout.addWidget(self._generate)
 
         left_layout = QVBoxLayout()
-        left_layout.addWidget(self._controls)
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        controls_scroll.setWidget(self._controls)
+        left_layout.addWidget(controls_scroll, 1)
         left_layout.addWidget(self._slope_note)
         left_layout.addWidget(route_actions)
         left_layout.addWidget(self._status)

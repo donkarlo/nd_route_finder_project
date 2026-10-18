@@ -9,3 +9,5 @@ class MultiWaypointRouteRequest(RouteRequest):
     """Backward-compatible RouteRequest with optional ordered intermediate points."""
 
     waypoints: tuple[GeoPoint, ...] = ()
+    route_mode: str = 'circular'  # direct ends at last waypoint
+    route_preference: str = 'auto'  # auto, shortest, distance

@@ -146,3 +146,66 @@ test('navigation tab hides the unrelated default planner start pin', () => {
   vm.runInContext("startMarker={addTo(){}};showTab('nav');",context);
   assert.equal(pinRemoved,true);
 });
+
+test('Garmin direction arrow applies a persistent signed calibration offset', () => {
+  const {context} = harness();
+  const degree = vm.runInContext("document.getElementById('headingOffset').value='-35';gpsHeadingFor({source:'garmin',rawHeading:100});", context);
+  assert.equal(degree, 65);
+  const wrap = vm.runInContext("document.getElementById('headingOffset').value='40';gpsHeadingFor({source:'garmin',rawHeading:340});", context);
+  assert.equal(wrap, 20);
+});
+
+test('phone arrow retains movement heading instead of idle handset heading', () => {
+  const {context} = harness();
+  const initial = vm.runInContext("gpsHeadingFor({source:'phone',lat:47,lon:15,rawHeading:180,speed:0,accuracy:5});",context);
+  assert.ok(Number.isNaN(initial));
+  const east = vm.runInContext("gpsHeadingFor({source:'phone',lat:47,lon:15.0002,rawHeading:180,speed:0,accuracy:5});",context);
+  assert.ok(east>85 && east<95);
+  const stopped = vm.runInContext("gpsHeadingFor({source:'phone',lat:47,lon:15.0002,rawHeading:240,speed:0,accuracy:5});",context);
+  assert.equal(stopped,east);
+  const compassDrift = vm.runInContext("gpsHeadingFor({source:'phone',lat:47,lon:15.0002,rawHeading:300,speed:4,accuracy:5});",context);
+  assert.equal(compassDrift,east, 'GPS travel course must outrank the handset compass');
+});
+
+test('3D GPS arrow is an elongated shaded triangle, not the old flat glyph', () => {
+  const {context} = harness();
+  const svg = vm.runInContext('gpsArrow3DSvg()', context);
+  assert.match(svg, /viewBox="0 0 36 48"/);
+  assert.match(svg, /fill="#fb5b58"/);
+  assert.match(svg, /fill="#bd1a23"/);
+  assert.match(svg, /M18 3 L31 42/);
+  assert.ok(!svg.includes('▲'));
+});
+
+test('3D GPS keeps Garmin calibrated bearing and shows red position if bearing missing', () => {
+  const {context} = harness();
+  const gps = vm.runInContext(`(function(){
+    const captured={};
+    map3dReady=true;
+    ensure3DOverlayLayers=()=>{};
+    map3d={getSource(id){return {setData(v){captured[id]=v;}};}};
+    document.getElementById('headingOffset').value='-30';
+    const compass=gpsHeadingFor({source:'garmin',rawHeading:120});
+    currentPosition={lat:47.1,lon:15.4,heading:compass};
+    sync3DOverlays();
+    const bearing=captured['nd-gps-heading'].features[0].properties.bearing;
+    currentPosition={lat:47.1,lon:15.4,heading:NaN};
+    sync3DOverlays();
+    const features=captured['nd-points'].features;
+    return {bearing,hasGps:features.some(f=>f.properties.kind==='gps'),hasArrow:captured['nd-gps-heading'].features.length};
+  })()`,context);
+  assert.equal(gps.bearing,90);
+  assert.equal(gps.hasGps,true);
+  assert.equal(gps.hasArrow,0);
+});
+
+test('Android routing has shape-aware alternative returns and a historical overlap score', () => {
+  const java = fs.readFileSync(path.resolve(__dirname,'../app/src/main/java/com/ndroutefinder/mobile/RouteEngine.java'),'utf8');
+  const index = fs.readFileSync(path.resolve(__dirname,'../app/src/main/java/com/ndroutefinder/mobile/RouteHistory.java'),'utf8');
+  assert.match(java,/eastShiftM/);
+  assert.match(java,/returnRetraceRatio/);
+  assert.match(java,/history\.overlapRatio\(track\.points\)/);
+  assert.match(java,/Closest available route/);
+  assert.match(index,/history_gpx_points\.csv/);
+  assert.ok(fs.existsSync(path.resolve(__dirname,'../app/src/main/assets/history_gpx_points.csv.gz')));
+});

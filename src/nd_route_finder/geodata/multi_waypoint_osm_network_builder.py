@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 
 import networkx as nx
 import osmnx as ox
@@ -7,6 +8,7 @@ from nd_route_finder.domain.activity_type import ActivityType
 from nd_route_finder.domain.geo_point import GeoPoint
 from nd_route_finder.domain.route_request import RouteRequest
 from nd_route_finder.geodata.osm_network_builder import OsmNetworkBuilder
+from nd_route_finder.geodata.overpass_fallback import OverpassFallback
 
 
 class MultiWaypointOsmNetworkBuilder(OsmNetworkBuilder):
@@ -14,10 +16,12 @@ class MultiWaypointOsmNetworkBuilder(OsmNetworkBuilder):
 
     _EARTH_RADIUS_M = 6_371_008.8
 
-    def build(self, request: RouteRequest) -> nx.MultiDiGraph:
+    def build(
+        self, request: RouteRequest, notify: Callable[[str], None] | None = None
+    ) -> nx.MultiDiGraph:
         waypoints = tuple(getattr(request, "waypoints", ()))
         if not waypoints:
-            return super().build(request)
+            return super().build(request, notify=notify)
 
         self._ensure_useful_tags()
         points = (
@@ -36,16 +40,23 @@ class MultiWaypointOsmNetworkBuilder(OsmNetworkBuilder):
             1_200.0,
             min(5_000.0, request.target_distance_m * 0.18),
         )
-        radius_m = max(request.graph_radius_m, farthest_m + detour_margin_m)
+        radius_m = max(
+            2_000.0 if getattr(request, "route_mode", "circular") == "direct" else request.graph_radius_m,
+            farthest_m + (2_000.0 if getattr(request, "route_mode", "circular") == "direct" else detour_margin_m),
+        )
 
-        return ox.graph.graph_from_point(
-            center_point=(center_latitude, center_longitude),
-            dist=radius_m,
-            dist_type="bbox",
-            network_type=ActivityType(request.activity).osmnx_network_type,
-            simplify=True,
-            retain_all=False,
-            truncate_by_edge=True,
+        return OverpassFallback().execute(
+            lambda: ox.graph.graph_from_point(
+                center_point=(center_latitude, center_longitude),
+                dist=radius_m,
+                dist_type="bbox",
+                network_type=ActivityType(request.activity).osmnx_network_type,
+                simplify=True,
+                retain_all=False,
+                truncate_by_edge=True,
+            ),
+            purpose="routing network",
+            notify=notify,
         )
 
     def _distance(self, first: GeoPoint, second: GeoPoint) -> float:

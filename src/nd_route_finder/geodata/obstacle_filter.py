@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import geopandas as gpd
 import networkx as nx
@@ -8,6 +8,7 @@ from shapely.geometry.base import BaseGeometry
 
 from nd_route_finder.domain.activity_type import ActivityType
 from nd_route_finder.domain.route_request import RouteRequest
+from nd_route_finder.geodata.overpass_fallback import OverpassFallback
 
 
 class ObstacleFilter:
@@ -16,8 +17,13 @@ class ObstacleFilter:
     _WATERWAYS = {"river", "stream", "canal", "drain", "ditch"}
     _NO_ACCESS = {"no", "private"}
 
-    def apply(self, graph: nx.MultiDiGraph, request: RouteRequest) -> nx.MultiDiGraph:
-        features = self._download_obstacles(request)
+    def apply(
+        self,
+        graph: nx.MultiDiGraph,
+        request: RouteRequest,
+        notify: Callable[[str], None] | None = None,
+    ) -> nx.MultiDiGraph:
+        features = self._download_obstacles(request, notify)
         edges = ox.convert.graph_to_gdfs(graph, nodes=False, edges=True)
         edges_projected = ox.projection.project_gdf(edges)
         features_projected = (
@@ -60,7 +66,9 @@ class ObstacleFilter:
             raise RuntimeError("All candidate route edges were removed by the safety constraints.")
         return filtered
 
-    def _download_obstacles(self, request: RouteRequest) -> gpd.GeoDataFrame:
+    def _download_obstacles(
+        self, request: RouteRequest, notify: Callable[[str], None] | None = None
+    ) -> gpd.GeoDataFrame:
         tags: dict[str, object] = {
             "waterway": list(self._WATERWAYS),
             "natural": "water",
@@ -68,10 +76,14 @@ class ObstacleFilter:
             "barrier": list(self._BLOCKED_BARRIERS | self._OPEN_BARRIERS),
         }
         try:
-            return ox.features.features_from_point(
-                (request.start_latitude, request.start_longitude),
-                tags=tags,
-                dist=request.graph_radius_m,
+            return OverpassFallback().execute(
+                lambda: ox.features.features_from_point(
+                    (request.start_latitude, request.start_longitude),
+                    tags=tags,
+                    dist=request.graph_radius_m,
+                ),
+                purpose="barriers and water crossings",
+                notify=notify,
             )
         except ox._errors.InsufficientResponseError:
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")

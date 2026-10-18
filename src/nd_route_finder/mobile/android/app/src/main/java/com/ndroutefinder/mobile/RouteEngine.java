@@ -32,6 +32,11 @@ public final class RouteEngine {
     private static final String BROUTER_URL = "https://brouter.de/brouter";
     private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final RouteHistory history;
+
+    public RouteEngine(android.content.Context context) {
+        history = new RouteHistory(context);
+    }
 
     public void shutdown() {
         executor.shutdownNow();
@@ -160,7 +165,7 @@ public final class RouteEngine {
     public void generate(String requestJson, ResultCallback callback) {
         executor.execute(() -> {
             try {
-                Request request = Request.fromJson(new JSONObject(requestJson));
+                Request request = Request.fromJson(new JSONObject(requestJson), history.routeCount() > 0);
                 List<List<GpxCodec.Point>> candidates = buildCandidateCoordinates(request);
                 if (candidates.isEmpty()) throw new IllegalStateException("No route candidates could be created.");
 
@@ -168,13 +173,21 @@ public final class RouteEngine {
                 Exception lastError = null;
                 int index = 0;
                 for (List<GpxCodec.Point> candidate : candidates) {
-                    try {
-                        String trackName = "ND_" + request.activity + "_" + (++index);
-                        String gpx = requestBrouter(candidate, profileFor(request.activity), trackName);
-                        GpxCodec.Track track = GpxCodec.parse(gpx, trackName);
-                        scored.add(score(track, request));
-                    } catch (Exception e) {
-                        lastError = e;
+                    List<String> profiles = new ArrayList<>();
+                    profiles.add(profileFor(request.activity));
+                    // Alternative cycling profiles help find a route near the
+                    // requested distance/grade even if none matches exactly.
+                    if ("cycling".equals(request.activity)) profiles.add("fastbike");
+                    else if (request.shortest()) profiles.add("shortest");
+                    for (String profile : profiles) {
+                        try {
+                            String trackName = "ND_" + request.routeMode + "_" + (++index);
+                            String gpx = requestBrouter(candidate, profile, trackName);
+                            GpxCodec.Track track = GpxCodec.parse(gpx, trackName);
+                            scored.add(score(track, request));
+                        } catch (Exception e) {
+                            lastError = e;
+                        }
                     }
                 }
 
@@ -184,22 +197,20 @@ public final class RouteEngine {
 
                 Collections.sort(scored, Comparator.comparingDouble(item -> item.score));
                 ScoredTrack best = scored.get(0);
-                boolean fallback = !best.withinSlope;
-                String note;
-                if (fallback) {
-                    String slopeText = best.track.maxGradePercent == null
-                            ? "unknown slope"
-                            : String.format(Locale.US, "max slope %.1f%%", best.track.maxGradePercent);
-                    note = String.format(Locale.US,
-                            "Closest route used: %.2f km, %s. No candidate met the requested slope limit.",
-                            best.track.distanceM / 1000.0, slopeText);
-                } else {
-                    note = String.format(Locale.US,
-                            "Generated route: %.2f km%s.",
-                            best.track.distanceM / 1000.0,
-                            best.track.maxGradePercent == null ? ""
-                                    : String.format(Locale.US, ", max slope %.1f%%", best.track.maxGradePercent));
-                }
+                double distanceDelta = Math.abs(best.track.distanceM - request.targetDistanceKm * 1000.0)
+                        / Math.max(1.0, request.targetDistanceKm * 1000.0);
+                boolean distanceMatched = request.shortest() || distanceDelta <= 0.10;
+                boolean fallback = !best.withinSlope || !distanceMatched;
+                String slopeText = best.track.maxGradePercent == null
+                        ? "unknown max slope"
+                        : String.format(Locale.US, "estimated max slope %.1f%%", best.track.maxGradePercent);
+                String note = String.format(Locale.US, "%s: %.2f km, %s.%s%s",
+                        fallback ? "Closest available route" : "Generated route",
+                        best.track.distanceM / 1000.0, slopeText,
+                        fallback ? " Some requested distance/slope targets were not met exactly." : "",
+                        history.routeCount() > 0 && !request.shortest()
+                                ? String.format(Locale.US, " Overlap with %d historical GPX tracks: %.0f%%.",
+                                    history.routeCount(), 100.0 * best.historicalOverlap) : "");
                 callback.onSuccess(best.track, fallback, note);
             } catch (Exception e) {
                 callback.onFailure(readable(e));
@@ -249,18 +260,30 @@ public final class RouteEngine {
         final double targetDistanceKm;
         final double maxGradePercent;
         final List<GpxCodec.Point> waypoints;
+        final String routeMode;
+        final String routePreference;
+        final boolean hasPreviousGpx;
 
         Request(double startLat, double startLon, String activity,
-                double targetDistanceKm, double maxGradePercent, List<GpxCodec.Point> waypoints) {
+                double targetDistanceKm, double maxGradePercent, List<GpxCodec.Point> waypoints,
+                String routeMode, String routePreference, boolean hasPreviousGpx) {
             this.startLat = startLat;
             this.startLon = startLon;
             this.activity = activity;
             this.targetDistanceKm = targetDistanceKm;
             this.maxGradePercent = maxGradePercent;
             this.waypoints = waypoints;
+            this.routeMode = routeMode;
+            this.routePreference = routePreference;
+            this.hasPreviousGpx = hasPreviousGpx;
         }
 
-        static Request fromJson(JSONObject json) throws Exception {
+        boolean shortest() {
+            return "shortest".equals(routePreference)
+                    || ("auto".equals(routePreference) && !hasPreviousGpx && !waypoints.isEmpty());
+        }
+
+        static Request fromJson(JSONObject json, boolean hasPreviousGpx) throws Exception {
             double lat = json.getDouble("startLat");
             double lon = json.getDouble("startLon");
             if (!validCoordinate(lat, lon)) {
@@ -286,7 +309,17 @@ public final class RouteEngine {
                     if (validCoordinate(wLat, wLon)) waypoints.add(new GpxCodec.Point(wLat, wLon, null));
                 }
             }
-            return new Request(lat, lon, activity, distanceKm, maxGrade, waypoints);
+            String mode = json.optString("routeMode", "circular");
+            if (!"circular".equals(mode) && !"direct".equals(mode))
+                throw new IllegalArgumentException("Route shape must be Circular or Direct.");
+            if ("direct".equals(mode) && waypoints.isEmpty())
+                throw new IllegalArgumentException("Direct route needs a destination point.");
+            String preference = json.optString("routePreference", "auto");
+            if (!"auto".equals(preference) && !"shortest".equals(preference)
+                    && !"distance".equals(preference))
+                throw new IllegalArgumentException("Invalid route priority.");
+            return new Request(lat, lon, activity, distanceKm, maxGrade, waypoints, mode,
+                    preference, hasPreviousGpx);
         }
     }
 
@@ -294,8 +327,10 @@ public final class RouteEngine {
         final GpxCodec.Track track;
         final double score;
         final boolean withinSlope;
-        ScoredTrack(GpxCodec.Track track, double score, boolean withinSlope) {
+        final double historicalOverlap;
+        ScoredTrack(GpxCodec.Track track, double score, boolean withinSlope, double historicalOverlap) {
             this.track = track; this.score = score; this.withinSlope = withinSlope;
+            this.historicalOverlap = historicalOverlap;
         }
     }
 
@@ -303,17 +338,35 @@ public final class RouteEngine {
         double targetM = request.targetDistanceKm * 1000.0;
         double lengthError = Math.abs(track.distanceM - targetM) / Math.max(1.0, targetM);
         boolean slopeKnown = track.maxGradePercent != null;
-        boolean withinSlope = !slopeKnown || track.maxGradePercent <= request.maxGradePercent;
-        double slopePenalty = 0.0;
-        if (slopeKnown && track.maxGradePercent > request.maxGradePercent) {
-            slopePenalty = 2.0 + (track.maxGradePercent - request.maxGradePercent) / Math.max(1.0, request.maxGradePercent);
+        boolean withinSlope = slopeKnown && track.maxGradePercent <= request.maxGradePercent;
+        double slopeExcess = slopeKnown
+                ? Math.max(0.0, track.maxGradePercent - request.maxGradePercent) / Math.max(1.0, request.maxGradePercent)
+                : 0.30;
+        // Missing a target by a small margin never makes the entire request
+        // fail; choose the lowest combined penalty among routed candidates.
+        if (request.shortest()) {
+            return new ScoredTrack(track, track.distanceM / 1000.0 + 20.0 * slopeExcess, withinSlope, 0.0);
         }
-        return new ScoredTrack(track, lengthError + slopePenalty, withinSlope);
+        double repeatRatio = "circular".equals(request.routeMode) && !request.waypoints.isEmpty()
+                ? returnRetraceRatio(track, request.waypoints.get(request.waypoints.size() - 1))
+                : 0.0;
+        double historicalOverlap = history.overlapRatio(track.points);
+        return new ScoredTrack(track,
+                3.0 * lengthError + 3.5 * slopeExcess
+                        + 1.7 * historicalOverlap + 0.9 * repeatRatio,
+                withinSlope, historicalOverlap);
     }
 
     private List<List<GpxCodec.Point>> buildCandidateCoordinates(Request request) {
         GpxCodec.Point start = new GpxCodec.Point(request.startLat, request.startLon, null);
         List<List<GpxCodec.Point>> out = new ArrayList<>();
+        if ("direct".equals(request.routeMode)) {
+            List<GpxCodec.Point> direct = new ArrayList<>();
+            direct.add(start);
+            direct.addAll(request.waypoints);
+            out.add(direct);
+            return out;
+        }
         if (request.waypoints.isEmpty()) {
             double targetM = request.targetDistanceKm * 1000.0;
             double baseRadius = Math.max(250.0, targetM / 5.2);
@@ -336,6 +389,7 @@ public final class RouteEngine {
             base.addAll(request.waypoints);
             base.add(start);
             out.add(base);
+            if (request.shortest()) return out;
 
             double directEstimate = polylineDistance(base);
             double targetM = request.targetDistanceKm * 1000.0;
@@ -358,8 +412,51 @@ public final class RouteEngine {
                     out.add(candidate);
                 }
             }
+            // A simple start -> destination -> start query can produce almost
+            // 100% retracing. Explore distinct return corridors even when the
+            // baseline route is already close to the target distance.
+            GpxCodec.Point last = request.waypoints.get(request.waypoints.size() - 1);
+            for (double eastShiftM : new double[]{-2800.0, 2200.0, 3000.0, 3900.0}) {
+                double cosLat = Math.max(0.1, Math.cos(Math.toRadians(start.latitude)));
+                List<GpxCodec.Point> route = new ArrayList<>();
+                route.add(start);
+                route.addAll(request.waypoints);
+                for (double[] fractionAndTaper : new double[][]{{0.77, 1.0}, {0.39, 0.76}}) {
+                    double fraction = fractionAndTaper[0];
+                    double taper = fractionAndTaper[1];
+                    route.add(new GpxCodec.Point(
+                            start.latitude + fraction * (last.latitude - start.latitude),
+                            start.longitude + fraction * (last.longitude - start.longitude)
+                                    + eastShiftM * taper / (111_195.0 * cosLat), null));
+                }
+                route.add(start);
+                out.add(route);
+            }
         }
         return out;
+    }
+
+    private static double returnRetraceRatio(GpxCodec.Track track, GpxCodec.Point destination) {
+        List<GpxCodec.Point> points = track.points;
+        if (points.size() < 5) return 0;
+        int split = 0;
+        double gap = Double.POSITIVE_INFINITY;
+        for (int i = 1; i < points.size() - 1; i++) {
+            double d = GpxCodec.distance(points.get(i), destination);
+            if (d < gap) {gap = d; split = i;}
+        }
+        if (split < 2 || split >= points.size() - 2) return 0;
+        int matches = 0, comparisons = 0;
+        for (int i = split + 1; i < points.size(); i += 5) {
+            comparisons++;
+            for (int j = 0; j <= split; j += 5) {
+                if (GpxCodec.distance(points.get(i), points.get(j)) < 40.0) {
+                    matches++;
+                    break;
+                }
+            }
+        }
+        return matches / (double) Math.max(1, comparisons);
     }
 
     private static double polylineDistance(List<GpxCodec.Point> points) {

@@ -1,21 +1,30 @@
+from collections.abc import Callable
+
 import networkx as nx
 import osmnx as ox
 
 from nd_route_finder.domain.activity_type import ActivityType
 from nd_route_finder.domain.route_request import RouteRequest
+from nd_route_finder.geodata.overpass_fallback import OverpassFallback
 
 
 class OsmNetworkBuilder:
-    def build(self, request: RouteRequest) -> nx.MultiDiGraph:
+    def build(
+        self, request: RouteRequest, notify: Callable[[str], None] | None = None
+    ) -> nx.MultiDiGraph:
         self._ensure_useful_tags()
-        graph = ox.graph.graph_from_point(
-            center_point=(request.start_latitude, request.start_longitude),
-            dist=request.graph_radius_m,
-            dist_type="bbox",
-            network_type=ActivityType(request.activity).osmnx_network_type,
-            simplify=True,
-            retain_all=False,
-            truncate_by_edge=True,
+        graph = OverpassFallback().execute(
+            lambda: ox.graph.graph_from_point(
+                center_point=(request.start_latitude, request.start_longitude),
+                dist=request.graph_radius_m,
+                dist_type="bbox",
+                network_type=ActivityType(request.activity).osmnx_network_type,
+                simplify=True,
+                retain_all=False,
+                truncate_by_edge=True,
+            ),
+            purpose="routing network",
+            notify=notify,
         )
         return graph
 

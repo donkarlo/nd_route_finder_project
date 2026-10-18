@@ -1,6 +1,6 @@
 # nd_route_finder
 
-A round-trip route finder for cycling and hiking.
+A route finder for circular and direct cycling, hiking, and walking routes.
 
 The application takes previously travelled GPX routes, a start point, a target
 distance, and a maximum allowed slope as input. It generates a round-trip route
@@ -9,6 +9,57 @@ satisfying the routing, access, and slope constraints.
 
 <img src="example.jpg" width="600">
 
+
+### Closest feasible circular route when an exact match is unavailable
+
+In the Ubuntu planner the default previous-route folder (when it exists) is
+`/home/donkarlo/Dropbox/repo/nd_robotic_ai_project/data/kind/environment/map/done`.
+All previous GPX files are loaded for spatial overlap comparison. In
+**Circular + Match target distance**, the program evaluates candidate length,
+estimated maximum slope, overlap with previously ridden GPX paths (sampled at
+roughly 38 m with a 38 m tolerance), and return-leg retracing. It chooses the
+lowest combined penalty even if no route meets all soft targets exactly.
+Disconnected graph segments no longer immediately end the search: BRouter
+checks multiple distinct return corridors with cycling or walking profiles.
+If even the BRouter fallback cannot reach the locations, it reports that no
+valid road-routed GPX was obtainable rather than inventing a path.
+
+Sample checked on 18 Oct 2026: 50 km and 20% requested via
+Semriacherstraße 100, 8102; 49.59 km, estimated 17.68% grade,
+40.3% overlap with the 38 GPX tracks, 8.6% return retrace. BRouter was the
+backend; independent Overpass barrier verification was unavailable.
+
+## Route shape, previous GPX tracks, and phone heading
+
+- **Circular**: return to the starting point via any ordered stops. **Direct**:
+  visit those stops in order and finish at the last selected point.
+- The GPX root is optional in the Ubuntu planner: leave it blank when no
+  previously travelled GPX files are available. In **Auto** mode, a route with
+  specified stops uses shortest-path routing when history is empty; otherwise
+  circular routing can optimize the requested target distance. **Shortest**
+  explicitly ignores target distance; **Match target distance** retains the
+  original exploratory distance-matching behavior. A shortest circular route
+  needs at least one stop to define the loop.
+- Android Plan route has the same shape and priority selectors. A compressed
+  snapshot of the 38 past GPX tracks from the configured Dropbox history folder
+  is bundled with the APK for offline overlap ranking. **Auto** compares
+  candidate routes against the previous rides and soft distance/slope targets;
+  when no history is available and there is a destination, it picks the shortest
+  available route. **Shortest** always overrides historical comparison. Android
+  generates BRouter trekking/fastbike cycling candidates, including alternative
+  return corridors, and offers the best available near miss if target distance
+  or slope cannot be met exactly. To include new rides in this *snapshot*, run
+  `scripts/build_android_route_history.py` on Ubuntu and rebuild/reinstall the APK;
+  the phone cannot directly read the Ubuntu Dropbox root.
+- Android Navigate GPX includes a persisted **Garmin heading calibration** value
+  from -180 to +180 degrees (clockwise positive), which rotates the red
+  elongated isosceles location arrow. With phone GPS, the arrow retains the
+  latest actual direction of travel, even when the phone is turned or stops.
+  The 2D arrow is flat, and the 3D map uses a gently beveled three-sided visual.
+  Without a valid heading the position remains visible as a dot. Garmin-only
+  calibration affects orientation in both maps, not recorded track coordinates.
+- The maximum slope is evaluated as before; when it cannot be met, a route
+  may be returned with an explicit constraint-fallback warning.
 
 ## Main behavior
 
@@ -100,6 +151,21 @@ At the same time, the generated route must satisfy constraints such as:
 - blocked barriers
 - unsuitable water crossings
 
+
+## OpenStreetMap / Overpass outages
+
+The Ubuntu planner retries a failed routing-network or obstacle-feature query
+through other public Overpass servers, without discarding your map selections.
+A 502 response, a rate-limit response or a network timeout is a temporary
+Overpass service problem, **not evidence that two places cannot be connected**.
+If all worldwide Overpass providers fail, the Ubuntu planner can request a
+**BRouter backup** for routes with ordered waypoints. This backup uses a
+cycling/walking routing profile, provides GPX elevations for an estimated slope
+check, and **clearly warns** that its barriers and water crossings have not
+been independently verified with Overpass. No independent verification is
+silently claimed. When neither backend is available, the UI gives an actionable
+error instead of raw server HTML. Successful Overpass responses are cached by
+OSMnx.
 
 ## Elevation and slope
 
