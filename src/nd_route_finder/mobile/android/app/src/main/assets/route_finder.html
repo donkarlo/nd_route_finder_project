@@ -336,6 +336,7 @@ function init(){
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
   startMarker = L.marker([start.lat,start.lon]).addTo(map).bindTooltip('Start');
   map.on('dragstart', disableFollowFromGesture);
+  map.on('zoomend', refreshDirectionArrowsForZoom);
   map.on('click', e => {
     if(currentTab === 'plan') applyPlannerPoint(e.latlng.lat,e.latlng.lng,'Map point');
     else addNavPoint(e.latlng.lat,e.latlng.lng,'Map point');
@@ -534,6 +535,7 @@ function init3DMap(){
     if(e?.originalEvent?.touches?.length>=2)return;
     disableFollowFromGesture();
   });
+  map3d.on('zoomend',sync3DOverlays);
   map3d.on('click',e=>{
     if(!e||!e.lngLat)return;
     if(currentTab==='plan')applyPlannerPoint(e.lngLat.lat,e.lngLat.lng,'Map point');
@@ -639,7 +641,7 @@ function ensure3DOverlayLayers(){
       layout:{
         'symbol-placement':'point',
         'text-field':'▲',
-        'text-size':['case',['==',['get','role'],'nav'],19,18],
+        'text-size':['interpolate',['linear'],['zoom'],8,17,13,24,19,40],
         'text-rotate':['get','bearing'],
         'text-rotation-alignment':'map',
         'text-allow-overlap':true,
@@ -687,7 +689,10 @@ function directionPointFeatures(route,role){
   const out=[],points=route?.points||[];
   if(points.length<2)return out;
   const total=Math.max(1,routeDistance(points));
-  const desired=Math.max(8,Math.min(28,Math.round(total/1200)));
+  const baseCount=Math.max(8,Math.min(28,Math.round(total/1200)));
+  const zoom=Number.isFinite(map3d?.getZoom?.())?map3d.getZoom():(Number.isFinite(map?.getZoom?.())?map.getZoom():13);
+  const densityScale=Math.pow(2,(zoom-13)/3);
+  const desired=Math.max(4,Math.min(96,Math.round(baseCount*densityScale)));
   const step=total/desired;
   let next=step*.65,acc=0;
   for(let i=1;i<points.length;i++){
@@ -943,20 +948,38 @@ function drawDirectionArrows(points,color='#082f63',zIndex=700){
   const group=L.layerGroup().addTo(map);
   if(!points||points.length<2)return group;
   const total=Math.max(1,routeDistance(points));
-  const desired=Math.max(8,Math.min(28,Math.round(total/1200)));
+  const baseCount=Math.max(8,Math.min(28,Math.round(total/1200)));
+  const zoom=Number.isFinite(map?.getZoom?.())?map.getZoom():13;
+  const densityScale=Math.pow(2,(zoom-13)/3);
+  const desired=Math.max(4,Math.min(96,Math.round(baseCount*densityScale)));
+  const arrowSize=Math.max(17,Math.min(40,24*Math.pow(2,(zoom-13)/6)));
   const step=total/desired;let next=step*.65,acc=0;
   for(let i=1;i<points.length;i++){
     const a=pointLatLon(points[i-1]),b=pointLatLon(points[i]),seg=hav(a,b);
     while(acc+seg>=next){
       const t=Math.max(0,Math.min(1,(next-acc)/Math.max(seg,1)));
       const lat=a[0]+(b[0]-a[0])*t,lon=a[1]+(b[1]-a[1])*t,ang=bearing(a,b);
-      const icon=L.divIcon({className:'dir-arrow',html:`<span style="color:${color};transform:rotate(${ang}deg)">▲</span>`,iconSize:[24,24],iconAnchor:[12,12]});
+      const icon=L.divIcon({className:'dir-arrow',html:`<span style="color:${color};font-size:${arrowSize}px;line-height:${arrowSize}px;transform:rotate(${ang}deg)">▲</span>`,iconSize:[arrowSize,arrowSize],iconAnchor:[arrowSize/2,arrowSize/2]});
       L.marker([lat,lon],{icon,interactive:false,zIndexOffset:zIndex}).addTo(group);
       next+=step;
     }
     acc+=seg;
   }
   return group;
+}
+function refreshDirectionArrowsForZoom(){
+  if(plannerArrowLayer&&plannerRoute?.points?.length){
+    map.removeLayer(plannerArrowLayer);
+    plannerArrowLayer=drawDirectionArrows(plannerRoute.points,'#082f63',760);
+  }
+  if(baseArrowLayer&&loadedGpx?.points?.length){
+    map.removeLayer(baseArrowLayer);
+    baseArrowLayer=drawDirectionArrows(loadedGpx.points,'#082f63',820);
+  }
+  if(navArrowLayer&&navRoute?.points?.length){
+    map.removeLayer(navArrowLayer);
+    navArrowLayer=drawDirectionArrows(navRoute.points,'#7c3aed',900);
+  }
 }
 function renderPlannerRoute(){
   if(plannerRouteLayer)map.removeLayer(plannerRouteLayer);if(plannerArrowLayer)map.removeLayer(plannerArrowLayer);
